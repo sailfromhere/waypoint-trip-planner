@@ -35,9 +35,10 @@ function useColumns(
             <EditableCell
               value={getValue()}
               type="text"
+              multiline
               placeholder="Untitled"
               onSave={(v) => onUpdate(row.original.id, "title", v)}
-              className="font-medium"
+              className="font-medium min-h-[4.5rem] flex flex-col justify-center"
             />
           ),
         }),
@@ -149,8 +150,10 @@ function useColumns(
             <EditableCell
               value={getValue()}
               type="text"
+              multiline
               placeholder="—"
               onSave={(v) => onUpdate(row.original.id, "notes", v)}
+              className="max-h-[4.5rem] overflow-y-auto thin-scroll"
             />
           ),
         }),
@@ -316,7 +319,7 @@ function DayGroupTable({
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="px-2 py-0.5"
+                    className="px-2 py-0.5 align-middle"
                     style={{ width: cell.column.getSize() }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

@@ -83,10 +83,12 @@ test("text cells are editable and the edit persists", async ({ page }) => {
   // BUG 2: clicking the cell bubbles to the row's onClick → selection →
   // parent re-render → unstable columns remount the cell → edit mode dies and
   // this input is detached before it can be filled.
-  const input = row.locator('input[type="text"]').first();
+  // Title/notes now edit as a <textarea> (multi-line, S7-C3); blur commits
+  // (plain Enter inserts a newline in a textarea).
+  const input = row.locator("textarea").first();
   await expect(input).toBeVisible();
   await input.fill("Old Faithful EDITED");
-  await input.press("Enter");
+  await input.blur();
 
   await expect(row).toContainText("Old Faithful EDITED");
 
@@ -95,6 +97,40 @@ test("text cells are editable and the edit persists", async ({ page }) => {
   await expect(
     page.locator("tr", { hasText: "Old Faithful EDITED" })
   ).toBeVisible();
+});
+
+test("start time saves and displays as 24h HH:MM (no seconds)", async ({
+  page,
+}) => {
+  await page.goto(`/trips/${tripId}`);
+
+  const row = page.locator("tr", { hasText: "Hotel Stay" }).first();
+  await expect(row).toBeVisible();
+
+  // Start is the 3rd column (title, category, start, …). Click the value
+  // (which sits at the top of the now-taller row) to enter edit mode.
+  const startCell = row.locator("td").nth(2);
+  await startCell.locator("div").first().click();
+
+  // S7-4: the time input must accept the value and not blank out. A native
+  // <input type="time"> rejects a seconds-bearing value, so this fails against
+  // the old code that fed it the raw "HH:MM:SS".
+  const timeInput = row.locator('input[type="time"]');
+  await expect(timeInput).toBeVisible();
+  await timeInput.fill("14:30");
+  await timeInput.blur();
+
+  // Read view shows exactly 24h "14:30" (no ":00" seconds tail).
+  await expect(startCell).toHaveText("14:30");
+
+  // Persists across reload.
+  await page.reload();
+  const startCell2 = page
+    .locator("tr", { hasText: "Hotel Stay" })
+    .first()
+    .locator("td")
+    .nth(2);
+  await expect(startCell2).toHaveText("14:30");
 });
 
 test("map markers are present after a reload", async ({ page }) => {

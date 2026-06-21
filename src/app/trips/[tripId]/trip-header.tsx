@@ -15,11 +15,14 @@ const STATUS_LABELS: Record<string, string> = {
 export function TripHeader({
   trip,
   onUpdate,
+  onDelete,
 }: {
   trip: Trip;
   onUpdate: (data: Partial<Trip>) => void;
+  onDelete?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState(trip.name);
   const [description, setDescription] = useState(trip.description ?? "");
   const [startDate, setStartDate] = useState(trip.startDate ?? "");
@@ -129,6 +132,33 @@ export function TripHeader({
         >
           Cancel
         </button>
+        {onDelete &&
+          (confirmDelete ? (
+            <div className="ml-auto flex items-center gap-2">
+              <span className="text-xs text-red-600 dark:text-red-400">
+                Delete this trip and all its items?
+              </span>
+              <button
+                onClick={onDelete}
+                className="rounded-md bg-red-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+              >
+                Keep
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="ml-auto text-xs text-red-500 hover:text-red-600 dark:hover:text-red-400 underline"
+            >
+              Delete trip
+            </button>
+          ))}
       </div>
     </div>
   );

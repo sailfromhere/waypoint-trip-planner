@@ -304,3 +304,35 @@ body {
     background: #18181b !important;
   }
 }
+
+/* Thin, hover-revealed scrollbars — applied APP-WIDE (every current and future
+   scroll container). The track stays clear; the thumb is slim and only appears
+   on hover. `.thin-scroll` is kept as an explicit alias for the same effect.
+   NOTE: `scrollbar-width` is NOT inherited (only `scrollbar-color` is), so the
+   standard props must be set on every element (`*`), not just :root — otherwise
+   only the page scrollbar gets thinned and inner containers stay default. */
+*,
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover,
+.thin-scroll:hover {
+  scrollbar-color: rgba(113, 113, 122, 0.5) transparent; /* zinc-500 @ 50% */
+}
+/* WebKit/Blink: a bare ::-webkit-scrollbar rule targets every scrollbar. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+*:hover::-webkit-scrollbar-thumb,
+.thin-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(113, 113, 122, 0.5); /* zinc-500 @ 50% */
+}

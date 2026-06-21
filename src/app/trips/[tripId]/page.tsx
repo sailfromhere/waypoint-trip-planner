@@ -2,8 +2,9 @@
 
 import { use, useState, useMemo, useEffect, useCallback, lazy, Suspense, type ReactNode } from "react";
 import Link from "next/link";
-import { useTrip, useUpdateTrip } from "@/lib/hooks/use-trips";
-import { useItineraryItems } from "@/lib/hooks/use-itinerary";
+import { useRouter } from "next/navigation";
+import { useTrip, useUpdateTrip, useDeleteTrip } from "@/lib/hooks/use-trips";
+import { useItineraryItems, useUpdateItem } from "@/lib/hooks/use-itinerary";
 import { useRoutes, useGeocode } from "@/lib/hooks/use-routes";
 import { useTasks } from "@/lib/hooks/use-tasks";
 import { useChecklist } from "@/lib/hooks/use-checklist";
@@ -81,9 +82,12 @@ export default function TripPage({
   params: Promise<{ tripId: string }>;
 }) {
   const { tripId } = use(params);
+  const router = useRouter();
   const { data: trip, isLoading } = useTrip(tripId);
   const updateTrip = useUpdateTrip(tripId);
+  const deleteTrip = useDeleteTrip();
   const { data: items } = useItineraryItems(tripId);
+  const updateItem = useUpdateItem(tripId);
   const { data: routes } = useRoutes(tripId);
   const { data: tasks } = useTasks(tripId);
   const { data: checklistItems } = useChecklist(tripId);
@@ -101,6 +105,29 @@ export default function TripPage({
     const t = setTimeout(() => importCalendarView(), 1000);
     return () => clearTimeout(t);
   }, []);
+
+  // Auto-fill blank drive durations from the REAL routed time (geography
+  // keystone — never invented). Only fills BLANKS so a planned duration set by
+  // the user/AI still wins (the sequencer's durationOf lesson). Stamped
+  // historical_estimate (an open field → clears the PATCH guard).
+  useEffect(() => {
+    if (!items || !routes?.drives?.length) return;
+    const driveSecs = new Map(
+      routes.drives.map((d) => [d.itemId, d.durationSeconds])
+    );
+    for (const it of items) {
+      if (it.category !== "drive" || it.durationMinutes != null) continue;
+      const sec = driveSecs.get(it.id);
+      if (!sec || sec <= 0) continue;
+      updateItem.mutate({
+        itemId: it.id,
+        data: {
+          durationMinutes: Math.round(sec / 60),
+          _provenance: "historical_estimate",
+        },
+      });
+    }
+  }, [items, routes, updateItem]);
 
   const dayWarnings = useMemo(
     () => computeDayWarnings(items ?? [], routes?.days ?? []),
@@ -208,9 +235,17 @@ export default function TripPage({
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left panel: planning + table — scrolls independently */}
         <div
-          className={`flex-1 overflow-y-auto px-6 py-6 ${mapCollapsed ? "" : "max-w-[60%]"}`}
+          className={`flex-1 overflow-y-auto px-6 pt-6 pb-48 ${mapCollapsed ? "" : "max-w-[60%]"}`}
         >
-          <TripHeader trip={trip} onUpdate={(data) => updateTrip.mutate(data)} />
+          <TripHeader
+            trip={trip}
+            onUpdate={(data) => updateTrip.mutate(data)}
+            onDelete={() =>
+              deleteTrip.mutate(tripId, {
+                onSuccess: () => router.push("/"),
+              })
+            }
+          />
           <PlanningPanel tripId={tripId} onItemsAccepted={() => geocode.mutate(undefined)} />
 
           <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
