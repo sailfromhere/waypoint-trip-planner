@@ -10,7 +10,7 @@ export async function PATCH(
   { params }: { params: Promise<{ tripId: string; itemId: string }> }
 ) {
   const { tripId, itemId } = await params;
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
 
   const source: Provenance = body._provenance ?? "user_provided";
   delete body._provenance;

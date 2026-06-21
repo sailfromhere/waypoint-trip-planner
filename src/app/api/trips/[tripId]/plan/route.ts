@@ -10,7 +10,7 @@ export async function POST(
   { params }: { params: Promise<{ tripId: string }> }
 ) {
   const { tripId } = await params;
-  const { prompt } = (await req.json()) as { prompt?: string };
+  const { prompt } = (await req.json().catch(() => ({}))) as { prompt?: string };
 
   if (!prompt?.trim()) {
     return NextResponse.json(

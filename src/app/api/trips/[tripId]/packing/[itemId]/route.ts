@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { checklistInstances } from "@/db/schema";
+import { packingListItems } from "@/db/schema";
+import { packingRequiredness } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
 export async function PATCH(
@@ -11,19 +12,30 @@ export async function PATCH(
   const body = await req.json().catch(() => ({}));
 
   const updates: Record<string, unknown> = {};
-  if (typeof body.text === "string") updates.text = body.text.trim();
-  if (typeof body.done === "boolean") updates.done = body.done;
+  if (typeof body.name === "string") updates.name = body.name.trim();
+  if (typeof body.packed === "boolean") updates.packed = body.packed;
   if (typeof body.sortOrder === "number") updates.sortOrder = body.sortOrder;
   if (body.category !== undefined)
     updates.category = body.category?.trim() || null;
+  if (packingRequiredness.includes(body.requiredness))
+    updates.requiredness = body.requiredness;
+  if (Number.isInteger(body.quantity) && body.quantity > 0)
+    updates.quantity = body.quantity;
+  if (typeof body.shared === "boolean") updates.shared = body.shared;
+  if (body.assignedTravelerId !== undefined)
+    updates.assignedTravelerId = body.assignedTravelerId || null;
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+  }
 
   const [updated] = await db
-    .update(checklistInstances)
+    .update(packingListItems)
     .set(updates)
     .where(
       and(
-        eq(checklistInstances.id, itemId),
-        eq(checklistInstances.tripId, tripId)
+        eq(packingListItems.id, itemId),
+        eq(packingListItems.tripId, tripId)
       )
     )
     .returning();
@@ -42,11 +54,11 @@ export async function DELETE(
   const { tripId, itemId } = await params;
 
   const [deleted] = await db
-    .delete(checklistInstances)
+    .delete(packingListItems)
     .where(
       and(
-        eq(checklistInstances.id, itemId),
-        eq(checklistInstances.tripId, tripId)
+        eq(packingListItems.id, itemId),
+        eq(packingListItems.tripId, tripId)
       )
     )
     .returning();

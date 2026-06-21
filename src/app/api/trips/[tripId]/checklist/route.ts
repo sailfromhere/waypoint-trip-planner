@@ -24,7 +24,7 @@ export async function POST(
   { params }: { params: Promise<{ tripId: string }> }
 ) {
   const { tripId } = await params;
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
 
   if (!body.text?.trim()) {
     return NextResponse.json({ error: "text is required" }, { status: 400 });

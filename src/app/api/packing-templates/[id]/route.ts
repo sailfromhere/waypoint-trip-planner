@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { checklistTemplates } from "@/db/schema";
+import { packingTemplates } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function PATCH(
@@ -11,9 +11,7 @@ export async function PATCH(
   const body = await req.json().catch(() => ({}));
 
   const updates: Record<string, unknown> = {};
-  if (typeof body.text === "string") updates.text = body.text.trim();
-  if (body.category !== undefined)
-    updates.category = body.category?.trim() || null;
+  if (typeof body.name === "string") updates.name = body.name.trim();
   if (typeof body.sortOrder === "number") updates.sortOrder = body.sortOrder;
 
   if (Object.keys(updates).length === 0) {
@@ -21,9 +19,9 @@ export async function PATCH(
   }
 
   const [updated] = await db
-    .update(checklistTemplates)
+    .update(packingTemplates)
     .set(updates)
-    .where(eq(checklistTemplates.id, id))
+    .where(eq(packingTemplates.id, id))
     .returning();
 
   if (!updated) {
@@ -39,9 +37,10 @@ export async function DELETE(
 ) {
   const { id } = await params;
 
+  // Membership join rows cascade; per-trip instances are unaffected (already copied).
   const [deleted] = await db
-    .delete(checklistTemplates)
-    .where(eq(checklistTemplates.id, id))
+    .delete(packingTemplates)
+    .where(eq(packingTemplates.id, id))
     .returning();
 
   if (!deleted) {

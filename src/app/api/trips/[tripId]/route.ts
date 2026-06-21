@@ -21,7 +21,7 @@ export async function PATCH(
   { params }: { params: Promise<{ tripId: string }> }
 ) {
   const { tripId } = await params;
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
 
   const [updated] = await db
     .update(trips)

@@ -48,6 +48,11 @@ export const provenanceType = [
   "live_researched",
 ] as const;
 
+// Packing requiredness as a priority badge. PRD's "always required" is captured
+// separately by the `alwaysInclude` boolean (loads into every trip regardless of
+// template); "template required" = requiredness "required" AND in a loaded template.
+export const packingRequiredness = ["required", "recommended", "optional"] as const;
+
 // ── Tables ──
 
 export const trips = pgTable("trips", {
@@ -165,6 +170,77 @@ export const checklistInstances = pgTable("checklist_instances", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ── Packing system (Phase 5) ──
+// Same repository → per-trip-instance, copy-on-instantiate pattern as the
+// checklist (checklistTemplates/checklistInstances), extended with quantity,
+// requiredness, shared/personal, and many-to-many template membership.
+
+// Master gear repository (user-level, not per-trip).
+export const packingItems = pgTable("packing_items", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  category: text("category"),
+  requiredness: text("requiredness", { enum: packingRequiredness })
+    .notNull()
+    .default("recommended"),
+  // "Always required" — instantiated into every trip regardless of template.
+  alwaysInclude: boolean("always_include").notNull().default(false),
+  // Group gear (one for the whole party) vs personal (each traveler brings own).
+  shared: boolean("shared").notNull().default(false),
+  defaultQuantity: integer("default_quantity").notNull().default(1),
+  notes: text("notes"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Named template sets (e.g. Beach, Backpacking, Road Trip, Photography).
+export const packingTemplates = pgTable("packing_templates", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Join: a master item belongs to many templates (camera ∈ Photography + Road Trip).
+export const packingItemTemplates = pgTable("packing_item_templates", {
+  id: text("id").primaryKey(),
+  packingItemId: text("packing_item_id")
+    .notNull()
+    .references(() => packingItems.id, { onDelete: "cascade" }),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => packingTemplates.id, { onDelete: "cascade" }),
+});
+
+// Per-trip packing list (copy-on-instantiate from the master repository).
+export const packingListItems = pgTable("packing_list_items", {
+  id: text("id").primaryKey(),
+  tripId: text("trip_id")
+    .notNull()
+    .references(() => trips.id, { onDelete: "cascade" }),
+  // Nullable: ad-hoc per-trip items have no master source. set null so deleting
+  // a master item doesn't drop an in-flight trip's packing entry.
+  packingItemId: text("packing_item_id").references(() => packingItems.id, {
+    onDelete: "set null",
+  }),
+  name: text("name").notNull(),
+  category: text("category"),
+  requiredness: text("requiredness", { enum: packingRequiredness })
+    .notNull()
+    .default("recommended"),
+  quantity: integer("quantity").notNull().default(1),
+  shared: boolean("shared").notNull().default(false),
+  // Modeled now; no traveler-picker UI yet (Phase 5b). set null so removing a
+  // traveler doesn't drop the packing item.
+  assignedTravelerId: text("assigned_traveler_id").references(
+    () => travelers.id,
+    { onDelete: "set null" }
+  ),
+  packed: boolean("packed").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const tripTasks = pgTable("trip_tasks", {
   id: text("id").primaryKey(),
   tripId: text("trip_id")
@@ -185,7 +261,52 @@ export const tripsRelations = relations(trips, ({ many }) => ({
   planningTurns: many(planningTurns),
   tripTasks: many(tripTasks),
   checklistInstances: many(checklistInstances),
+  packingListItems: many(packingListItems),
 }));
+
+export const packingItemsRelations = relations(packingItems, ({ many }) => ({
+  templates: many(packingItemTemplates),
+  instances: many(packingListItems),
+}));
+
+export const packingTemplatesRelations = relations(
+  packingTemplates,
+  ({ many }) => ({
+    items: many(packingItemTemplates),
+  })
+);
+
+export const packingItemTemplatesRelations = relations(
+  packingItemTemplates,
+  ({ one }) => ({
+    item: one(packingItems, {
+      fields: [packingItemTemplates.packingItemId],
+      references: [packingItems.id],
+    }),
+    template: one(packingTemplates, {
+      fields: [packingItemTemplates.templateId],
+      references: [packingTemplates.id],
+    }),
+  })
+);
+
+export const packingListItemsRelations = relations(
+  packingListItems,
+  ({ one }) => ({
+    trip: one(trips, {
+      fields: [packingListItems.tripId],
+      references: [trips.id],
+    }),
+    masterItem: one(packingItems, {
+      fields: [packingListItems.packingItemId],
+      references: [packingItems.id],
+    }),
+    assignedTraveler: one(travelers, {
+      fields: [packingListItems.assignedTravelerId],
+      references: [travelers.id],
+    }),
+  })
+);
 
 export const planningTurnsRelations = relations(planningTurns, ({ one }) => ({
   trip: one(trips, { fields: [planningTurns.tripId], references: [trips.id] }),

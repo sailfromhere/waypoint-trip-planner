@@ -7,7 +7,12 @@ import type {
   tripTasks,
   checklistTemplates,
   checklistInstances,
+  packingItems,
+  packingTemplates,
+  packingItemTemplates,
+  packingListItems,
   provenanceType,
+  packingRequiredness,
 } from "./schema";
 
 // ── Row types (what you get from a SELECT) ──
@@ -19,6 +24,10 @@ export type PlanningTurn = InferSelectModel<typeof planningTurns>;
 export type TripTask = InferSelectModel<typeof tripTasks>;
 export type ChecklistTemplate = InferSelectModel<typeof checklistTemplates>;
 export type ChecklistInstance = InferSelectModel<typeof checklistInstances>;
+export type PackingItem = InferSelectModel<typeof packingItems>;
+export type PackingTemplate = InferSelectModel<typeof packingTemplates>;
+export type PackingItemTemplate = InferSelectModel<typeof packingItemTemplates>;
+export type PackingListItem = InferSelectModel<typeof packingListItems>;
 
 // ── Insert types (what you pass to an INSERT) ──
 
@@ -29,6 +38,14 @@ export type NewPlanningTurn = InferInsertModel<typeof planningTurns>;
 export type NewTripTask = InferInsertModel<typeof tripTasks>;
 export type NewChecklistTemplate = InferInsertModel<typeof checklistTemplates>;
 export type NewChecklistInstance = InferInsertModel<typeof checklistInstances>;
+export type NewPackingItem = InferInsertModel<typeof packingItems>;
+export type NewPackingTemplate = InferInsertModel<typeof packingTemplates>;
+export type NewPackingItemTemplate = InferInsertModel<
+  typeof packingItemTemplates
+>;
+export type NewPackingListItem = InferInsertModel<typeof packingListItems>;
+
+export type PackingRequiredness = (typeof packingRequiredness)[number];
 
 // ── Provenance ──
 

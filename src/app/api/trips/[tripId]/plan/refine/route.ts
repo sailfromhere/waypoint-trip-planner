@@ -12,7 +12,7 @@ export async function POST(
   { params }: { params: Promise<{ tripId: string }> }
 ) {
   const { tripId } = await params;
-  const { turnId, message } = (await req.json()) as {
+  const { turnId, message } = (await req.json().catch(() => ({}))) as {
     turnId?: string;
     message?: string;
   };

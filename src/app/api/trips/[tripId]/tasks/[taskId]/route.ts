@@ -8,7 +8,7 @@ export async function PATCH(
   { params }: { params: Promise<{ tripId: string; taskId: string }> }
 ) {
   const { tripId, taskId } = await params;
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
 
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (typeof body.text === "string") updates.text = body.text.trim();

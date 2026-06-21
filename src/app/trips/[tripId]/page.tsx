@@ -12,6 +12,8 @@ import { TripHeader } from "./trip-header";
 import { PlanningPanel } from "./planning-panel";
 import { TasksPanel } from "./tasks-panel";
 import { ChecklistPanel } from "./checklist-panel";
+import { PackingPanel } from "./packing-panel";
+import { usePacking } from "@/lib/hooks/use-packing";
 
 const TripMap = lazy(() =>
   import("./trip-map").then((mod) => ({ default: mod.TripMap }))
@@ -20,6 +22,7 @@ const TripMap = lazy(() =>
 const RIGHT_PANEL_TABS: { key: string; label: string; content: (tripId: string) => ReactNode }[] = [
   { key: "reminder", label: "Reminder", content: (tripId) => <TasksPanel tripId={tripId} /> },
   { key: "pre-departure", label: "Pre-Departure", content: (tripId) => <ChecklistPanel tripId={tripId} /> },
+  { key: "packing", label: "Packing", content: (tripId) => <PackingPanel tripId={tripId} /> },
 ];
 
 function computeDayWarnings(
@@ -77,6 +80,7 @@ export default function TripPage({
   const { data: routes } = useRoutes(tripId);
   const { data: tasks } = useTasks(tripId);
   const { data: checklistItems } = useChecklist(tripId);
+  const { data: packingItems } = usePacking(tripId);
   const geocode = useGeocode(tripId);
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -257,6 +261,11 @@ export default function TripPage({
                     {tab.key === "pre-departure" && (checklistItems ?? []).filter((t) => !t.done).length > 0 && (
                       <span className="ml-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
                         {(checklistItems ?? []).filter((t) => !t.done).length}
+                      </span>
+                    )}
+                    {tab.key === "packing" && (packingItems ?? []).filter((t) => !t.packed).length > 0 && (
+                      <span className="ml-1.5 text-[10px] text-zinc-400 dark:text-zinc-500">
+                        {(packingItems ?? []).filter((t) => !t.packed).length}
                       </span>
                     )}
                   </button>
