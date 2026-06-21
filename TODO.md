@@ -10,5 +10,6 @@
 - [x] ~~Create a **MapTiler** free account + API key for nicer vector map tiles. Set `NEXT_PUBLIC_MAPTILER_KEY` in `.env.local`.~~ Done — integrated MapTiler `streets-v2` vector style; falls back to CartoDB raster if key is absent.
 - [ ] **Restrict the MapTiler key to your allowed domain(s)/URLs** in the MapTiler account dashboard. It's a `NEXT_PUBLIC_` key (shipped to the browser by design — that's normal for map tiles), so the real protection is an origin allowlist, not secrecy. Do this before deploying publicly so the key can't be reused on other sites (it would burn your free-tier quota).
 - [x] ~~Decide whether to self-host **OSRM** or use the public demo / OpenRouteService free key (routing). **Decision:** OSRM public demo server for prototype (rate-limited but fine for single-user dev).~~
+- [ ] **When you deploy:** the repo is now **public** at github.com/sailfromhere/waypoint-trip-planner, and `.env.local` is gitignored (NOT in the repo). So the deploy host (Vercel/etc.) needs every secret set in its dashboard: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `MAPBOX_TOKEN`, `NEXT_PUBLIC_MAPTILER_KEY`, `GEOCODING_PROVIDER`, `ROUTING_PROVIDER`, `OSRM_BASE_URL`. Without them the deployed build has no DB/AI/maps.
 
 _Open-Meteo (weather) needs no key._

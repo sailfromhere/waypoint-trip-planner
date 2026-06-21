@@ -88,6 +88,8 @@
 - **Phase 8 — Live Research + Execution + polish** — swap mocks for real free-tier APIs behind user-triggered toggle; execution view (today/next/drive time). **Also: live/seasonal timing data** to power optimal-timing suggestions (crowd calendars, holiday awareness, Old Faithful eruption predictions, sunrise/sunset) — see "AI planning quality". *Success:* toggle re-stamps `live_researched`; end-to-end demo. — Status: TBD
 
 ## Cross-cutting
+- **Repo published 2026-06-21** to github.com/sailfromhere/waypoint-trip-planner (PUBLIC); `main` tracks `origin`. **README + `.env.local.example` added (Built 2026-06-21)** — `.gitignore` now exempts the example (`!.env.local.example`) so it tracks while real `.env.local` stays ignored. Deploy needs env vars as host secrets (not in repo — see TODO.md).
+- **API hardening (Built 2026-06-21):** all `req.json()` calls guard against malformed/empty bodies (`.catch(() => ({}))`) → field-validation 400 instead of a 500.
 - Cost: Opus for reasoning, Haiku for mechanical; cache Trip State context across calls.
 - Tests not vacuous: failing fixture for the invariant before implementing the guard.
 - Good-automatic + easy-manual override: AI proposes diffs, human approves.
