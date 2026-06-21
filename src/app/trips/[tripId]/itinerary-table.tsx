@@ -14,7 +14,9 @@ import {
   useCreateItem,
   useUpdateItem,
   useDeleteItem,
+  useAutoSchedule,
 } from "@/lib/hooks/use-itinerary";
+import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state/sequence";
 import { EditableCell } from "./editable-cell";
 
 const col = createColumnHelper<ItineraryItem>();
@@ -230,6 +232,7 @@ function DayGroupTable({
   group,
   columns,
   onAddItem,
+  onAutoSchedule,
   selectedItemId,
   onItemSelect,
   warning,
@@ -237,6 +240,7 @@ function DayGroupTable({
   group: DayGroup;
   columns: ColumnDef<ItineraryItem, unknown>[];
   onAddItem: (date: string | null) => void;
+  onAutoSchedule?: () => void;
   selectedItemId: string | null;
   onItemSelect: (itemId: string) => void;
   warning?: DayWarning;
@@ -261,6 +265,15 @@ function DayGroupTable({
             </span>
           )}
         </h3>
+        {onAutoSchedule && group.date && (
+          <button
+            onClick={onAutoSchedule}
+            className="text-[11px] text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-0.5 hover:border-zinc-400 dark:hover:border-zinc-600 transition-colors normal-case"
+            title="Fill in blank start times for this day (drive times from routing; your set times are kept)"
+          >
+            ⏱ Auto-schedule
+          </button>
+        )}
       </div>
 
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
@@ -330,18 +343,57 @@ export function ItineraryTable({
   selectedItemId,
   onItemSelect,
   dayWarnings,
+  drives,
 }: {
   tripId: string;
   selectedItemId: string | null;
   onItemSelect: (itemId: string) => void;
   dayWarnings?: DayWarning[];
+  drives?: { itemId: string; durationSeconds: number }[];
 }) {
   const { data: items, isLoading } = useItineraryItems(tripId);
   const createItem = useCreateItem(tripId);
   const updateItem = useUpdateItem(tripId);
   const deleteItem = useDeleteItem(tripId);
+  const autoSchedule = useAutoSchedule(tripId);
   const [newDateInput, setNewDateInput] = useState("");
   const [showNewDay, setShowNewDay] = useState(false);
+  // Undo affordance for the deterministic fill (good-automatic + easy-manual).
+  const [lastApplied, setLastApplied] = useState<ScheduleChange[] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const driveSecondsById = useMemo(
+    () => new Map((drives ?? []).map((d) => [d.itemId, d.durationSeconds])),
+    [drives]
+  );
+
+  const applySchedule = useCallback(
+    (changes: ScheduleChange[]) => {
+      if (changes.length === 0) {
+        setLastApplied(null);
+        setNotice("All start times are already set.");
+        return;
+      }
+      autoSchedule.mutate(
+        changes.map((c) => ({ itemId: c.itemId, startTime: c.startTime, endTime: c.endTime }))
+      );
+      setLastApplied(changes);
+      setNotice(null);
+    },
+    [autoSchedule]
+  );
+
+  const handleUndoSchedule = useCallback(() => {
+    if (!lastApplied) return;
+    autoSchedule.mutate(
+      lastApplied.map((c) => ({
+        itemId: c.itemId,
+        startTime: c.before.startTime,
+        endTime: c.before.endTime,
+      }))
+    );
+    setLastApplied(null);
+  }, [lastApplied, autoSchedule]);
 
   // Keep mutation refs current without changing handler identity. Stable
   // handlers => stable column defs => cells are NOT remounted when the parent
@@ -401,6 +453,37 @@ export function ItineraryTable({
 
   return (
     <div>
+      {(lastApplied || notice) && (
+        <div className="mb-3 flex items-center gap-3 rounded-md border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 text-xs text-blue-700 dark:text-blue-300">
+          {lastApplied ? (
+            <>
+              <span>
+                Filled {lastApplied.length} start time
+                {lastApplied.length === 1 ? "" : "s"}.
+              </span>
+              <button
+                onClick={handleUndoSchedule}
+                className="font-medium underline hover:no-underline"
+              >
+                Undo
+              </button>
+            </>
+          ) : (
+            <span>{notice}</span>
+          )}
+          <button
+            onClick={() => {
+              setLastApplied(null);
+              setNotice(null);
+            }}
+            className="ml-auto text-blue-400 hover:text-blue-600 dark:hover:text-blue-200"
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {groups.length === 0 ? (
         <div className="text-center py-12 text-sm text-zinc-500">
           <p className="mb-4">No items yet. Add your first day to get started.</p>
@@ -412,6 +495,9 @@ export function ItineraryTable({
             group={group}
             columns={columns}
             onAddItem={handleAddItem}
+            onAutoSchedule={() =>
+              applySchedule(sequenceDay(group.items, driveSecondsById))
+            }
             selectedItemId={selectedItemId}
             onItemSelect={onItemSelect}
             warning={group.date ? dayWarnings?.find((w) => w.date === group.date) : undefined}
@@ -457,6 +543,17 @@ export function ItineraryTable({
             >
               + Unscheduled item
             </button>
+            {(items ?? []).some((i) => i.date) && (
+              <button
+                onClick={() =>
+                  applySchedule(sequenceTrip(items ?? [], driveSecondsById))
+                }
+                className="ml-auto text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+                title="Fill blank start times across all days (kept: your times & booked items)"
+              >
+                ⏱ Auto-schedule all
+              </button>
+            )}
           </>
         )}
       </div>

@@ -22,11 +22,13 @@
 /* Light typography pass (#3): use the Geist font that's already loaded (body
    was overriding it with Arial), nudge the base size up for readability, and
    smooth rendering. Deeper polish/motion lives in Phase 4.5. */
-/* Base size bumped from the browser default 16px → 18px. Tailwind's text-sm/xs
-   (the bulk of the UI) are rem-based, so this scales the whole app up ~12% for
-   readability. Dial here if it feels too large. */
+/* Fluid base size. Tailwind's text-sm/xs (the bulk of the UI) are rem-based, so
+   the whole app scales with this one value. clamp() makes it track the viewport
+   width: ~16px on a laptop, growing to 20px on a wide 4K monitor.
+   Tune the endpoints: 16px = floor (narrow screens), 20px = ceiling (wide),
+   the middle term sets where it transitions. */
 html {
-  font-size: 20px;
+  font-size: clamp(15px, 0.27vw + 13px, 20px);
 }
 
 body {
@@ -38,4 +40,267 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+}
+
+/* ── Calendar (FullCalendar) — scale & theme to match the app ──────────────────
+   FullCalendar's defaults are large and blue; the app is small and zinc-neutral.
+   IMPORTANT: FC injects its stylesheet into <head> at RUNTIME, after this file,
+   so equal-specificity rules lose the cascade. We therefore bump specificity
+   (the leading `.fc`) AND use !important on sizes/colors so these reliably win.
+   Day-color event backgrounds are still set per-event in JS. */
+.waypoint-calendar {
+  --fc-border-color: #e4e4e7; /* zinc-200 */
+  --fc-today-bg-color: rgba(59, 130, 246, 0.06);
+  --fc-now-indicator-color: #ef4444;
+  /* Opaque (== the panel color). FC also uses this var for the "+more" popover
+     surface — leaving it transparent made the popover see-through over the grid. */
+  --fc-page-bg-color: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-calendar {
+    --fc-border-color: #27272a; /* zinc-800 */
+    --fc-today-bg-color: rgba(59, 130, 246, 0.1);
+    --fc-page-bg-color: #18181b; /* zinc-900 == panel */
+  }
+}
+/* Toolbar: title at trip-title size; tighter gap below */
+.waypoint-calendar .fc .fc-toolbar.fc-header-toolbar {
+  margin-bottom: 0.6rem;
+}
+.waypoint-calendar .fc .fc-toolbar-title {
+  font-size: 0.875rem !important; /* text-sm — matches the "Calendar"/"AI Planning Copilot" panel headers (rem → scales) */
+  font-weight: 500 !important;
+}
+/* Buttons (prev/next/today/week/day/month) styled like the right-panel tabs:
+   text-xs, zinc, flat, pill — not FC's chunky blue group. */
+.waypoint-calendar .fc .fc-button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #71717a !important; /* zinc-500 */
+  font-size: 0.75rem !important; /* text-xs — tab parity */
+  font-weight: 500 !important;
+  padding: 0.25rem 0.625rem !important; /* py-1 px-2.5 */
+  border-radius: 0.375rem !important; /* rounded-md */
+  text-transform: capitalize;
+}
+.waypoint-calendar .fc .fc-button:hover {
+  background: #fafafa !important; /* zinc-50 */
+  color: #3f3f46 !important; /* zinc-700 */
+}
+.waypoint-calendar .fc .fc-button-primary:not(:disabled).fc-button-active,
+.waypoint-calendar .fc .fc-button-primary:not(:disabled):active {
+  background: #f4f4f5 !important; /* zinc-100 */
+  color: #3f3f46 !important;
+  font-weight: 500 !important;
+}
+.waypoint-calendar .fc .fc-button:disabled {
+  opacity: 0.4 !important;
+}
+.waypoint-calendar .fc .fc-button-group {
+  gap: 2px;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-calendar .fc .fc-button {
+    color: #a1a1aa !important; /* zinc-400 */
+  }
+  .waypoint-calendar .fc .fc-button:hover {
+    background: rgba(39, 39, 42, 0.5) !important;
+    color: #d4d4d8 !important;
+  }
+  .waypoint-calendar .fc .fc-button-primary:not(:disabled).fc-button-active,
+  .waypoint-calendar .fc .fc-button-primary:not(:disabled):active {
+    background: #27272a !important; /* zinc-800 */
+    color: #e4e4e7 !important;
+  }
+}
+/* Day-of-week headers + left-rail time labels + the "all-day" axis label:
+   small & muted (the all-day label matches the hour labels, per request). */
+.waypoint-calendar .fc .fc-col-header-cell-cushion,
+.waypoint-calendar .fc .fc-timegrid-slot-label-cushion,
+.waypoint-calendar .fc .fc-timegrid-axis-cushion {
+  font-size: 0.7rem !important;
+  color: #71717a !important; /* zinc-500 */
+  font-weight: 500 !important;
+}
+/* Compact 30-min slot rows (full 00:00–24:00 day without inner scroll). Events
+   use a custom renderer (`.wp-ev`, see calendar-view.tsx) clamped to a LINE
+   COUNT derived from duration (round(min/30)), so a 30-min block = 1 line, 60 =
+   2, etc. Clamping by line count (not pixel height) guarantees whole lines —
+   a too-long title ellipsizes on its last allowed line, never a half-cut line. */
+.waypoint-calendar .fc .fc-timegrid-slot {
+  height: 20px;
+}
+.waypoint-calendar .fc .fc-daygrid-event {
+  border: none !important;
+}
+.waypoint-calendar .fc .fc-event-main {
+  padding: 0 !important;
+}
+/* Timed event BLOCK carries the visual: a light tint of the day color (--ev set
+   per-event in eventDidMount) + a solid left color band. It fills the full
+   duration height, so overlapping events each render their true length
+   side-by-side. The text-clamp lives on the height-less inner .wp-ev. */
+.waypoint-calendar .fc .fc-timegrid-event {
+  border: none !important;
+  background: color-mix(in srgb, var(--ev, #6b7280) 15%, #ffffff) !important;
+  border-left: 3px solid var(--ev, #6b7280) !important;
+  border-radius: 3px !important;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-calendar .fc .fc-timegrid-event {
+    background: color-mix(in srgb, var(--ev, #6b7280) 26%, #18181b) !important;
+  }
+}
+/* Inner content: title only, clamped to round(min/30) lines. NO explicit height
+   (that re-introduced mid-line clipping) — it sits at the block top and the
+   block's tint fills the rest. */
+.waypoint-calendar .wp-ev {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--wp-lines, 1);
+  line-clamp: var(--wp-lines, 1);
+  overflow: hidden;
+  color: #18181b;
+  font-size: 0.75rem; /* text-xs — matches table cells */
+  line-height: 1.4;
+  font-weight: 500;
+  padding: 1px 6px;
+  overflow-wrap: anywhere;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-calendar .wp-ev {
+    color: #ededed;
+  }
+}
+/* Normal (>=30-min) blocks get a touch of top padding ≈ one line-gap so the
+   first line isn't crammed against the top. <30-min and all-day keep tight. */
+.waypoint-calendar .wp-ev-timed {
+  padding-top: 0.3rem;
+}
+/* All-day events: solid filled block, single line, with a little top breathing
+   room so the text isn't jammed against the top edge. */
+.waypoint-calendar .fc .fc-daygrid-event {
+  min-height: 23px;
+}
+.waypoint-calendar .wp-ev-allday {
+  line-height: 17px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 3px 6px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ffffff;
+}
+/* Month view: Apple-style event row — a left color band (= trip day), the title,
+   then a muted right-aligned time. Timed month events render as list-items
+   (transparent), so the custom content sits on a plain cell. */
+.waypoint-calendar .fc .fc-daygrid-dot-event {
+  background: transparent !important;
+  padding: 1px 4px;
+}
+.waypoint-calendar .fc .fc-daygrid-dot-event:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+.waypoint-calendar .wp-evm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.waypoint-calendar .wp-evm-bar {
+  flex: 0 0 auto;
+  width: 3px;
+  height: 0.95em;
+  border-radius: 2px;
+}
+.waypoint-calendar .wp-evm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.waypoint-calendar .wp-evm-time {
+  flex: 0 0 auto;
+  color: #71717a;
+  font-variant-numeric: tabular-nums;
+}
+/* Month view: trip-day top color band — a padded, rounded bar inset from the
+   day-cell edges (left/right + top inset all equal, ≈ the all-day event inset). */
+/* Trip-day top color band — a padded bar inset from the cell edges (left/right
+   + top), drawn as a `background` gradient layer on the day frame. Backgrounds
+   PAINT CROSS-BROWSER (the earlier ::before pseudo-element did not render in
+   WebKit/Safari on FC's flex frame — the "worked, then broke when padding was
+   added" regression). Shared geometry here; per-day color below. The frame gets
+   top padding so the number/events clear the band. */
+.waypoint-calendar .fc .fc-daygrid-day.wp-has-band .fc-daygrid-day-frame {
+  padding-top: 9px;
+  background-repeat: no-repeat;
+  background-position: 4px 3px;
+  background-size: calc(100% - 8px) 4px;
+}
+.waypoint-calendar .fc .wp-band-0 .fc-daygrid-day-frame { background-image: linear-gradient(#3b82f6, #3b82f6); }
+.waypoint-calendar .fc .wp-band-1 .fc-daygrid-day-frame { background-image: linear-gradient(#ef4444, #ef4444); }
+.waypoint-calendar .fc .wp-band-2 .fc-daygrid-day-frame { background-image: linear-gradient(#10b981, #10b981); }
+.waypoint-calendar .fc .wp-band-3 .fc-daygrid-day-frame { background-image: linear-gradient(#f59e0b, #f59e0b); }
+.waypoint-calendar .fc .wp-band-4 .fc-daygrid-day-frame { background-image: linear-gradient(#8b5cf6, #8b5cf6); }
+.waypoint-calendar .fc .wp-band-5 .fc-daygrid-day-frame { background-image: linear-gradient(#ec4899, #ec4899); }
+.waypoint-calendar .fc .wp-band-6 .fc-daygrid-day-frame { background-image: linear-gradient(#06b6d4, #06b6d4); }
+.waypoint-calendar .fc .wp-band-7 .fc-daygrid-day-frame { background-image: linear-gradient(#f97316, #f97316); }
+.waypoint-calendar .fc .wp-band-8 .fc-daygrid-day-frame { background-image: linear-gradient(#14b8a6, #14b8a6); }
+.waypoint-calendar .fc .wp-band-9 .fc-daygrid-day-frame { background-image: linear-gradient(#6366f1, #6366f1); }
+/* Month view: date number → same size as the Sun/Mon column headers. */
+.waypoint-calendar .fc .fc-daygrid-day-number {
+  font-size: 0.7rem !important;
+  color: #71717a;
+  font-weight: 500;
+}
+/* "+N more" link → same size as the "all-day" / hour labels. Target the base
+   `.fc-more-link` class (present on both daygrid + timegrid more-links). */
+.waypoint-calendar .fc .fc-more-link,
+.waypoint-calendar .fc .fc-daygrid-more-link,
+.waypoint-calendar .fc a.fc-more-link {
+  font-size: 0.7rem !important;
+  color: #71717a !important;
+  font-weight: 500 !important;
+}
+/* The "+N more" popover. FC defaults its surface to --fc-page-bg-color, which we
+   set transparent for the grid — so it rendered see-through. Give it an explicit
+   opaque surface + border + shadow. Unscoped `.fc-popover` too in case FC mounts
+   it on <body> rather than inside .waypoint-calendar (FC only renders here). */
+.waypoint-calendar .fc .fc-popover,
+.fc-popover {
+  background: #ffffff !important;
+  border: 1px solid #e4e4e7 !important;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+.fc-popover .fc-popover-header {
+  background: #f4f4f5 !important;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}
+.fc-popover .fc-popover-body {
+  background: #ffffff !important;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-calendar .fc .fc-popover,
+  .fc-popover {
+    background: #18181b !important; /* zinc-900 */
+    border-color: #27272a !important;
+  }
+  .fc-popover .fc-popover-header {
+    background: #27272a !important;
+  }
+  .fc-popover .fc-popover-body {
+    background: #18181b !important;
+  }
 }

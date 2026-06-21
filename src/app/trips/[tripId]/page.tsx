@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useMemo, useCallback, lazy, Suspense, type ReactNode } from "react";
+import { use, useState, useMemo, useEffect, useCallback, lazy, Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { useTrip, useUpdateTrip } from "@/lib/hooks/use-trips";
 import { useItineraryItems } from "@/lib/hooks/use-itinerary";
@@ -17,6 +17,13 @@ import { usePacking } from "@/lib/hooks/use-packing";
 
 const TripMap = lazy(() =>
   import("./trip-map").then((mod) => ({ default: mod.TripMap }))
+);
+
+// Extracted so we can warm the chunk before the user expands the calendar
+// (React.lazy dedupes the import promise, so this just preloads the bundle).
+const importCalendarView = () => import("./calendar-view");
+const CalendarView = lazy(() =>
+  importCalendarView().then((mod) => ({ default: mod.CalendarView }))
 );
 
 const RIGHT_PANEL_TABS: { key: string; label: string; content: (tripId: string) => ReactNode }[] = [
@@ -86,6 +93,14 @@ export default function TripPage({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [mapCollapsed, setMapCollapsed] = useState(false);
   const [activeRightTab, setActiveRightTab] = useState(RIGHT_PANEL_TABS[0].key);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
+  // Warm the lazy calendar chunk shortly after the page settles so the first
+  // expand is instant (no ~0.5s import delay). Hovering the toggle warms it too.
+  useEffect(() => {
+    const t = setTimeout(() => importCalendarView(), 1000);
+    return () => clearTimeout(t);
+  }, []);
 
   const dayWarnings = useMemo(
     () => computeDayWarnings(items ?? [], routes?.days ?? []),
@@ -197,11 +212,49 @@ export default function TripPage({
         >
           <TripHeader trip={trip} onUpdate={(data) => updateTrip.mutate(data)} />
           <PlanningPanel tripId={tripId} onItemsAccepted={() => geocode.mutate(undefined)} />
+
+          <div className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+            <button
+              onClick={() => setCalendarOpen((o) => !o)}
+              onMouseEnter={() => importCalendarView()}
+              className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors ${
+                calendarOpen ? "rounded-t-lg" : "rounded-lg"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-zinc-400 text-xs">
+                  {calendarOpen ? "▼" : "▶"}
+                </span>
+                Calendar
+              </span>
+            </button>
+            {calendarOpen && (
+              <div className="border-t border-zinc-200 dark:border-zinc-800 p-3">
+                <Suspense
+                  fallback={
+                    <div className="py-12 text-center text-sm text-zinc-400">
+                      Loading calendar...
+                    </div>
+                  }
+                >
+                  <CalendarView
+                    tripId={tripId}
+                    items={items ?? []}
+                    trip={trip}
+                    selectedItemId={selectedItemId}
+                    onItemSelect={handleItemSelect}
+                  />
+                </Suspense>
+              </div>
+            )}
+          </div>
+
           <ItineraryTable
             tripId={tripId}
             selectedItemId={selectedItemId}
             onItemSelect={handleItemSelect}
             dayWarnings={dayWarnings}
+            drives={routes?.drives}
           />
         </div>
 

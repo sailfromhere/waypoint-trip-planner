@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+TODO.md
+IMPROVEMENTS.md
+test_prompts.md
+Waypoint_PRD_v1.md
 
 # debug
 npm-debug.log*
