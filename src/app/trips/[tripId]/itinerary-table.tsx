@@ -15,6 +15,8 @@ import {
   createColumnHelper,
   type ColumnDef,
   type Row,
+  type ColumnSizingState,
+  type OnChangeFn,
 } from "@tanstack/react-table";
 import {
   DndContext,
@@ -75,13 +77,13 @@ function useColumns(
               multiline
               placeholder="Untitled"
               onSave={(v) => onUpdate(row.original.id, "title", v)}
-              className="font-medium min-h-[4.5rem] flex flex-col justify-center"
+              className="font-medium min-h-[4.5rem]"
             />
           ),
         }),
         col.accessor("category", {
           header: "Category",
-          size: 100,
+          size: 110,
           cell: ({ row, getValue }) => (
             <EditableCell
               value={getValue()}
@@ -125,7 +127,7 @@ function useColumns(
               return (
                 <div className="flex flex-col gap-0.5" data-testid="drive-location">
                   <div data-testid="drive-origin" className="flex items-center gap-1">
-                    <span className="text-[10px] text-zinc-400 shrink-0">From</span>
+                    <span className="text-[10px] text-zinc-400 shrink-0 w-7 text-right">From</span>
                     <LocationCell
                       tripId={tripId}
                       value={item.originName}
@@ -135,7 +137,7 @@ function useColumns(
                     />
                   </div>
                   <div data-testid="drive-dest" className="flex items-center gap-1">
-                    <span className="text-[10px] text-zinc-400 shrink-0">To</span>
+                    <span className="text-[10px] text-zinc-400 shrink-0 w-7 text-right">To</span>
                     <LocationCell
                       tripId={tripId}
                       value={item.destinationName}
@@ -160,7 +162,7 @@ function useColumns(
         }),
         col.accessor("confirmationStatus", {
           header: "Status",
-          size: 90,
+          size: 125,
           cell: ({ row, getValue }) => (
             <EditableCell
               value={getValue()}
@@ -191,6 +193,7 @@ function useColumns(
               value={getValue()}
               type="text"
               multiline
+              multilineMaxClass="max-h-[4.5rem]"
               placeholder="—"
               onSave={(v) => onUpdate(row.original.id, "notes", v)}
               className="max-h-[4.5rem] overflow-y-auto thin-scroll"
@@ -200,6 +203,7 @@ function useColumns(
         col.display({
           id: "actions",
           size: 40,
+          enableResizing: false,
           cell: ({ row }) => (
             <button
               onClick={() => onDelete(row.original.id)}
@@ -282,22 +286,9 @@ function dayKeyOf(item: Pick<ItineraryItem, "date">): string {
   return item.date ?? UNSCHEDULED_KEY;
 }
 
-function GripDots() {
-  return (
-    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
-      <circle cx="3" cy="3" r="1.3" />
-      <circle cx="7" cy="3" r="1.3" />
-      <circle cx="3" cy="8" r="1.3" />
-      <circle cx="7" cy="8" r="1.3" />
-      <circle cx="3" cy="13" r="1.3" />
-      <circle cx="7" cy="13" r="1.3" />
-    </svg>
-  );
-}
-
-// A draggable itinerary row. The WHOLE row is the drag handle (a leading grip
-// glyph just signals the affordance on hover). The active editors inside each
-// cell stop pointer-down propagation, so dragging to select text in a cell
+// A draggable itinerary row. The WHOLE row is the drag handle — the cursor-grab
+// affordance is the only signal needed (no grip glyph). The active editors inside
+// each cell stop pointer-down propagation, so dragging to select text in a cell
 // won't start a row drag; everywhere else on the row begins one.
 function SortableRow({
   row,
@@ -365,7 +356,7 @@ function SortableRow({
           : "hover:bg-zinc-50 dark:hover:bg-zinc-800/30"
       }`}
     >
-      {row.getVisibleCells().map((cell, i) => (
+      {row.getVisibleCells().map((cell) => (
         <td
           key={cell.id}
           className="px-2 py-0.5 align-middle relative"
@@ -375,13 +366,6 @@ function SortableRow({
           // click target, not just the centered value.
           style={{ width: cell.column.getSize(), height: 1 }}
         >
-          {/* Hover-revealed grip affordance on the first cell. Pointer-events
-              off so it never intercepts clicks into the title editor. */}
-          {i === 0 && (
-            <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 text-zinc-300 dark:text-zinc-600 opacity-0 group-hover/row:opacity-100 transition-opacity">
-              <GripDots />
-            </span>
-          )}
           {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
       ))}
@@ -390,23 +374,213 @@ function SortableRow({
 }
 
 // Floating copy that tracks the pointer during a drag (no in-place ghost). A
-// compact card rather than a full <tr>, which can't render outside a <table>.
-function DragRowPreview({ item }: { item: ItineraryItem }) {
-  const time = item.startTime
-    ? /^(\d{1,2}):(\d{2})/.exec(String(item.startTime))
-    : null;
+// faithful full-row render: a one-row mini-table reusing the SAME column defs,
+// sized to the source row's measured width, so it looks like the actual row
+// being physically lifted (a <tr> can't render outside a <table>, but a whole
+// <table> can live inside the DragOverlay div). The reused cells render in
+// display mode and the row height matches automatically.
+function DragRowPreview({
+  item,
+  columns,
+  columnOrder,
+  columnVisibility,
+  columnSizing,
+  width,
+}: {
+  item: ItineraryItem;
+  columns: ColumnDef<ItineraryItem, unknown>[];
+  columnOrder: string[];
+  columnVisibility: Record<string, boolean>;
+  columnSizing: ColumnSizingState;
+  width?: number;
+}) {
+  const table = useReactTable({
+    data: useMemo(() => [item], [item]),
+    columns,
+    state: { columnOrder, columnVisibility, columnSizing },
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => row.id,
+  });
+  const row = table.getRowModel().rows[0];
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-white dark:bg-zinc-800 shadow-lg ring-1 ring-black/10 px-3 py-2 text-sm cursor-grabbing">
-      <span className="text-zinc-300 dark:text-zinc-600">
-        <GripDots />
+    <table
+      style={{ width }}
+      className="w-full table-fixed border-collapse bg-white dark:bg-zinc-900 rounded-lg shadow-2xl ring-1 ring-black/10 cursor-grabbing"
+    >
+      <tbody>
+        <tr>
+          {row.getVisibleCells().map((cell) => (
+            <td
+              key={cell.id}
+              className="px-2 py-0.5 align-middle"
+              style={{ width: cell.column.getSize(), height: 1 }}
+            >
+              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+// Column customization (show/hide + reorder). The "actions" delete column is a
+// control, not data — it's pinned last and excluded from the menu. Title is
+// non-hideable (it drives the row height via its min-height).
+type ColumnMeta = { id: string; label: string; fixed?: boolean };
+const ITINERARY_COLUMNS: ColumnMeta[] = [
+  { id: "title", label: "Title", fixed: true },
+  { id: "category", label: "Category" },
+  { id: "startTime", label: "Start" },
+  { id: "durationMinutes", label: "Duration" },
+  { id: "destinationName", label: "Location" },
+  { id: "confirmationStatus", label: "Status" },
+  { id: "costCents", label: "Cost" },
+  { id: "notes", label: "Notes" },
+];
+const DEFAULT_COLUMN_ORDER = ITINERARY_COLUMNS.map((c) => c.id);
+const COLUMN_PREFS_KEY = "waypoint-itinerary-columns";
+
+function ColumnsMenuRow({
+  col,
+  visible,
+  onToggle,
+}: {
+  col: ColumnMeta;
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: col.id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-2 px-1.5 py-1.5 rounded ${
+        isDragging ? "bg-zinc-100 dark:bg-zinc-800 opacity-80" : ""
+      }`}
+    >
+      <span
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing text-zinc-300 dark:text-zinc-600 select-none leading-none"
+        title="Drag to reorder"
+      >
+        ⠿
       </span>
-      <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate max-w-[260px]">
-        {item.title || "Untitled"}
-      </span>
-      {time && (
-        <span className="text-xs text-zinc-400">
-          {time[1].padStart(2, "0")}:{time[2]}
+      <label className="flex items-center gap-2 flex-1 cursor-pointer text-xs">
+        <input
+          type="checkbox"
+          checked={visible}
+          disabled={col.fixed}
+          onChange={onToggle}
+          className="accent-zinc-700 dark:accent-zinc-300"
+        />
+        <span className={col.fixed ? "text-zinc-400" : ""}>
+          {col.label}
+          {col.fixed ? " · always shown" : ""}
         </span>
+      </label>
+    </div>
+  );
+}
+
+// Toolbar dropdown to show/hide and reorder columns. Uses its OWN DndContext for
+// the sortable list — rendered above the row DndContext so the two never nest.
+function ColumnsMenu({
+  order,
+  visibility,
+  onOrderChange,
+  onVisibilityChange,
+  openUp = false,
+}: {
+  order: string[];
+  visibility: Record<string, boolean>;
+  onOrderChange: (o: string[]) => void;
+  onVisibilityChange: (v: Record<string, boolean>) => void;
+  // Open the dropdown ABOVE the button (it lives in the bottom toolbar).
+  openUp?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
+  );
+  const metaById = useMemo(
+    () => new Map(ITINERARY_COLUMNS.map((c) => [c.id, c])),
+    []
+  );
+  const ordered = useMemo(
+    () => order.map((id) => metaById.get(id)).filter(Boolean) as ColumnMeta[],
+    [order, metaById]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const hiddenCount = ITINERARY_COLUMNS.filter(
+    (c) => !c.fixed && visibility[c.id] === false
+  ).length;
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIndex = order.indexOf(String(active.id));
+    const newIndex = order.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onOrderChange(arrayMove(order, oldIndex, newIndex));
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-2.5 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
+        title="Show, hide, and reorder columns"
+      >
+        ⚙ Columns{hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+      </button>
+      {open && (
+        <div
+          className={`absolute right-0 z-50 w-60 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl p-1.5 ${
+            openUp ? "bottom-full mb-1" : "mt-1"
+          }`}
+        >
+          <p className="px-1.5 py-1 text-[10px] uppercase tracking-wide text-zinc-400">
+            Drag to reorder · toggle to show/hide
+          </p>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={order} strategy={verticalListSortingStrategy}>
+              {ordered.map((c) => (
+                <ColumnsMenuRow
+                  key={c.id}
+                  col={c}
+                  visible={visibility[c.id] !== false}
+                  onToggle={() =>
+                    onVisibilityChange({
+                      ...visibility,
+                      [c.id]: visibility[c.id] === false,
+                    })
+                  }
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+        </div>
       )}
     </div>
   );
@@ -415,6 +589,11 @@ function DragRowPreview({ item }: { item: ItineraryItem }) {
 function DayGroupTable({
   group,
   columns,
+  columnOrder,
+  columnVisibility,
+  columnSizing,
+  onColumnSizingChange,
+  headerDrag,
   onAddItem,
   onAutoSchedule,
   selectedItemId,
@@ -424,6 +603,20 @@ function DayGroupTable({
 }: {
   group: DayGroup;
   columns: ColumnDef<ItineraryItem, unknown>[];
+  // Shared across every day-table so all groups show the same columns in the
+  // same order ("actions" is appended last by the parent).
+  columnOrder: string[];
+  columnVisibility: Record<string, boolean>;
+  columnSizing: ColumnSizingState;
+  onColumnSizingChange: OnChangeFn<ColumnSizingState>;
+  // Native HTML5 header drag-reorder wiring (shared across all day-theads).
+  headerDrag: {
+    overId: string | null;
+    onDragStart: (id: string) => void;
+    onDragOver: (id: string) => void;
+    onDragEnd: () => void;
+    onDrop: (id: string) => void;
+  };
   onAddItem: (date: string | null) => void;
   onAutoSchedule?: () => void;
   selectedItemId: string | null;
@@ -437,6 +630,10 @@ function DayGroupTable({
   const table = useReactTable({
     data: group.items,
     columns,
+    state: { columnOrder, columnVisibility, columnSizing },
+    onColumnSizingChange,
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
     getCoreRowModel: getCoreRowModel(),
     // Stable per-item row ids so dnd identifies rows by item id (not array
     // index) and React moves the right DOM node when the order changes.
@@ -475,33 +672,103 @@ function DayGroupTable({
       </div>
 
       <div
-        className={`rounded-lg border bg-white dark:bg-zinc-900 overflow-hidden transition-colors ${
+        // overflow-x-auto (not overflow-hidden): at narrow split-pane widths the
+        // table scrolls horizontally instead of crushing columns (which clipped
+        // the "Completed" status). The table keeps a min width = sum of column
+        // sizes so columns hold their natural widths.
+        className={`rounded-lg border bg-white dark:bg-zinc-900 overflow-x-auto transition-colors ${
           isCrossDayTarget
             ? "border-blue-400 dark:border-blue-500 ring-1 ring-blue-300 dark:ring-blue-700"
             : "border-zinc-200 dark:border-zinc-800"
         }`}
       >
-        <table className="w-full border-collapse">
+        <table
+          // table-fixed so column widths are honored EXACTLY (auto-layout sizes
+          // to content and ignores the resize/size hints — which both hid resizes
+          // and let the Status select get crushed).
+          // Width = the EXACT sum of the (possibly-resized) column widths, in px,
+          // with NO percentage anywhere (no w-full, no minWidth:100%). Any
+          // percentage gives table-fixed slack to redistribute — and Safari
+          // clamps the table toward that % and squeezes the other columns when one
+          // is resized (Chrome overflows instead). With table-width == Σ column
+          // widths there is zero slack, so it always overflows+scrolls and a
+          // squeeze is impossible in any engine. Trade-off: on a screen wide
+          // enough that the table is narrower than the pane, there's empty space
+          // to the right (left-aligned) — acceptable vs. the squeeze.
+          className="table-fixed border-collapse"
+          style={{ width: table.getTotalSize() }}
+        >
           <thead>
             {table.getHeaderGroups().map((hg) => (
               <tr
                 key={hg.id}
                 className="border-b border-zinc-100 dark:border-zinc-800"
               >
-                {hg.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="text-left text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 py-1.5"
-                    style={{ width: header.getSize() }}
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
+                {hg.headers.map((header) => {
+                  const colId = header.column.id;
+                  const reorderable = colId !== "actions";
+                  const isOver =
+                    headerDrag.overId === colId && reorderable;
+                  return (
+                    <th
+                      key={header.id}
+                      className={`relative text-left text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 py-1.5 ${
+                        isOver
+                          ? "border-l-2 border-blue-400 dark:border-blue-500"
+                          : ""
+                      }`}
+                      style={{ width: header.getSize() }}
+                    >
+                      {header.isPlaceholder ? null : reorderable ? (
+                        <span
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = "move";
+                            headerDrag.onDragStart(colId);
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                            headerDrag.onDragOver(colId);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            headerDrag.onDrop(colId);
+                          }}
+                          onDragEnd={headerDrag.onDragEnd}
+                          className="cursor-grab active:cursor-grabbing select-none inline-block"
+                          title="Drag to reorder column"
+                        >
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )}
+                        </span>
+                      ) : (
+                        flexRender(
                           header.column.columnDef.header,
                           header.getContext()
-                        )}
-                  </th>
-                ))}
+                        )
+                      )}
+                      {header.column.getCanResize() && (
+                        <div
+                          onMouseDown={header.getResizeHandler()}
+                          onTouchStart={header.getResizeHandler()}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={() => header.column.resetSize()}
+                          // Edge grab strip; a resize must never start a column
+                          // drag, so it lives outside the draggable label.
+                          className={`absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none touch-none ${
+                            header.column.getIsResizing()
+                              ? "bg-blue-400 dark:bg-blue-500"
+                              : "hover:bg-zinc-300 dark:hover:bg-zinc-600"
+                          }`}
+                          title="Drag to resize · double-click to reset"
+                        />
+                      )}
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
@@ -569,9 +836,164 @@ export function ItineraryTable({
   // over (for the cross-day drop highlight).
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overDayKey, setOverDayKey] = useState<string | null>(null);
+  // The dragged row's pixel width, measured on drag start, so the faithful
+  // DragOverlay row matches the source (its columns are w-full % of this).
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   // Undo affordance for the deterministic fill (good-automatic + easy-manual).
   const [lastApplied, setLastApplied] = useState<ScheduleChange[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Column show/hide + order + widths, persisted per-browser. Shared by every
+  // day-table so all groups stay in lockstep.
+  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
+  const [columnVisibility, setColumnVisibility] = useState<
+    Record<string, boolean>
+  >({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+
+  // `prefsRef` always holds the latest three so persistence never reads a stale
+  // closure (we update it synchronously inside each setter, not in an effect).
+  const prefsRef = useRef<{
+    order: string[];
+    visibility: Record<string, boolean>;
+    sizing: ColumnSizingState;
+  }>({ order: DEFAULT_COLUMN_ORDER, visibility: {}, sizing: {} });
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Persist ONLY from user actions (never a mount effect — that races the load
+  // effect under StrictMode's double-invoke and clobbers saved prefs with
+  // defaults). Resize fires continuously, so its writes are debounced.
+  const persistNow = useCallback(() => {
+    try {
+      localStorage.setItem(COLUMN_PREFS_KEY, JSON.stringify(prefsRef.current));
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
+  }, []);
+  const persistSoon = useCallback(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(persistNow, 250);
+  }, [persistNow]);
+
+  // Load saved prefs once. Reconcile with the KNOWN columns: keep the user's
+  // order for ones that still exist, append any newly-added columns, drop
+  // unknown ones — so a future column-set change never silently loses a column.
+  // A one-time hydrate-from-storage MUST be an effect (not a lazy useState
+  // initializer): localStorage is unavailable during SSR, and reading it in the
+  // initializer would diverge from the server HTML and break hydration. The
+  // set-state-in-effect rule is disabled for exactly these intentional one-shot
+  // hydration writes (deps [] — they run once, not on a render-derived value).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLUMN_PREFS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        order?: unknown;
+        visibility?: unknown;
+        sizing?: unknown;
+      };
+      if (Array.isArray(parsed.order)) {
+        const known = new Set(DEFAULT_COLUMN_ORDER);
+        const order = (parsed.order as string[]).filter((id) => known.has(id));
+        for (const id of DEFAULT_COLUMN_ORDER)
+          if (!order.includes(id)) order.push(id);
+        prefsRef.current.order = order;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setColumnOrder(order);
+      }
+      if (parsed.visibility && typeof parsed.visibility === "object") {
+        prefsRef.current.visibility = parsed.visibility as Record<string, boolean>;
+        setColumnVisibility(parsed.visibility as Record<string, boolean>);
+      }
+      if (parsed.sizing && typeof parsed.sizing === "object") {
+        prefsRef.current.sizing = parsed.sizing as ColumnSizingState;
+        setColumnSizing(parsed.sizing as ColumnSizingState);
+      }
+    } catch {
+      /* corrupt prefs — fall back to defaults */
+    }
+  }, []);
+
+  const handleColumnOrderChange = useCallback(
+    (order: string[]) => {
+      setColumnOrder(order);
+      prefsRef.current = { ...prefsRef.current, order };
+      persistNow();
+    },
+    [persistNow]
+  );
+  const handleColumnVisibilityChange = useCallback(
+    (visibility: Record<string, boolean>) => {
+      setColumnVisibility(visibility);
+      prefsRef.current = { ...prefsRef.current, visibility };
+      persistNow();
+    },
+    [persistNow]
+  );
+  const handleColumnSizingChange = useCallback<OnChangeFn<ColumnSizingState>>(
+    (updater) => {
+      setColumnSizing((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        prefsRef.current = { ...prefsRef.current, sizing: next };
+        return next;
+      });
+      persistSoon();
+    },
+    [persistSoon]
+  );
+
+  // Native HTML5 header drag-reorder (deliberately separate from the dnd-kit row
+  // drag — a <th> isn't a registered row draggable, so the two never conflict and
+  // we avoid nesting a second DndContext). The dragged id lives in a ref; the
+  // hovered id is state for the drop cue.
+  const headerDragId = useRef<string | null>(null);
+  const [headerOverId, setHeaderOverId] = useState<string | null>(null);
+  const onHeaderDragStart = useCallback((id: string) => {
+    headerDragId.current = id;
+  }, []);
+  const onHeaderDragOver = useCallback(
+    (id: string) => setHeaderOverId((cur) => (cur === id ? cur : id)),
+    []
+  );
+  const onHeaderDragEnd = useCallback(() => {
+    headerDragId.current = null;
+    setHeaderOverId(null);
+  }, []);
+  const onHeaderDrop = useCallback(
+    (targetId: string) => {
+      const src = headerDragId.current;
+      headerDragId.current = null;
+      setHeaderOverId(null);
+      if (!src || src === targetId) return;
+      setColumnOrder((order) => {
+        const from = order.indexOf(src);
+        const to = order.indexOf(targetId);
+        if (from < 0 || to < 0) return order;
+        const next = [...order];
+        next.splice(from, 1);
+        next.splice(to, 0, src);
+        prefsRef.current = { ...prefsRef.current, order: next };
+        persistNow();
+        return next;
+      });
+    },
+    [persistNow]
+  );
+  const headerDrag = useMemo(
+    () => ({
+      overId: headerOverId,
+      onDragStart: onHeaderDragStart,
+      onDragOver: onHeaderDragOver,
+      onDragEnd: onHeaderDragEnd,
+      onDrop: onHeaderDrop,
+    }),
+    [headerOverId, onHeaderDragStart, onHeaderDragOver, onHeaderDragEnd, onHeaderDrop]
+  );
+
+  // TanStack wants the full leaf-id order including the pinned "actions" control.
+  const tableColumnOrder = useMemo(
+    () => [...columnOrder, "actions"],
+    [columnOrder]
+  );
 
   const driveSecondsById = useMemo(
     () => new Map((drives ?? []).map((d) => [d.itemId, d.durationSeconds])),
@@ -608,7 +1030,10 @@ export function ItineraryTable({
   );
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
-    setActiveId(String(e.active.id));
+    const id = String(e.active.id);
+    setActiveId(id);
+    const el = document.getElementById(`item-${id}`);
+    setDragWidth(el ? el.getBoundingClientRect().width : null);
   }, []);
 
   const handleDragOver = useCallback(
@@ -623,6 +1048,7 @@ export function ItineraryTable({
       const active = activeId;
       setActiveId(null);
       setOverDayKey(null);
+      setDragWidth(null);
       const overId = e.over ? String(e.over.id) : null;
       if (!active || !overId) return;
 
@@ -846,6 +1272,7 @@ export function ItineraryTable({
           onDragCancel={() => {
             setActiveId(null);
             setOverDayKey(null);
+            setDragWidth(null);
           }}
         >
           {groups.map((group) => {
@@ -855,6 +1282,11 @@ export function ItineraryTable({
                 key={key}
                 group={group}
                 columns={columns}
+                columnOrder={tableColumnOrder}
+                columnVisibility={columnVisibility}
+                columnSizing={columnSizing}
+                onColumnSizingChange={handleColumnSizingChange}
+                headerDrag={headerDrag}
                 onAddItem={handleAddItem}
                 onAutoSchedule={() =>
                   applySchedule(sequenceDay(group.items, driveSecondsById))
@@ -875,7 +1307,16 @@ export function ItineraryTable({
           })}
 
           <DragOverlay dropAnimation={null}>
-            {activeItem ? <DragRowPreview item={activeItem} /> : null}
+            {activeItem ? (
+              <DragRowPreview
+                item={activeItem}
+                columns={columns}
+                columnOrder={tableColumnOrder}
+                columnVisibility={columnVisibility}
+                columnSizing={columnSizing}
+                width={dragWidth ?? undefined}
+              />
+            ) : null}
           </DragOverlay>
         </DndContext>
       )}
@@ -928,6 +1369,21 @@ export function ItineraryTable({
               >
                 ⏱ Auto-schedule all
               </button>
+            )}
+            {groups.length > 0 && (
+              <div
+                className={
+                  (items ?? []).some((i) => i.date) ? "py-0.5" : "ml-auto py-0.5"
+                }
+              >
+                <ColumnsMenu
+                  openUp
+                  order={columnOrder}
+                  visibility={columnVisibility}
+                  onOrderChange={handleColumnOrderChange}
+                  onVisibilityChange={handleColumnVisibilityChange}
+                />
+              </div>
             )}
           </>
         )}

@@ -64,6 +64,12 @@ async function dragRowOnto(page: Page, sourceText: string, targetText: string) {
   const target = page.locator("tr", { hasText: targetText }).first();
   await expect(source).toBeVisible();
   await expect(target).toBeVisible();
+  // Wait for the client to be truly READY before dragging: the itinerary query
+  // only fires after the "use client" component hydrates, so once the network is
+  // idle the dnd pointer listeners are bound. (Visible ≠ hydrated — on a cold
+  // Next.js dev compile the first drag otherwise races listener binding and
+  // misfires, landing the row cross-day.)
+  await page.waitForLoadState("networkidle");
   const sb = (await source.boundingBox())!;
   const tb = (await target.boundingBox())!;
   // Grab the source on its left edge (over the grip area, away from editors).

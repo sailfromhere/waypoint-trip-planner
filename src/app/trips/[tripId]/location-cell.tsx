@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { LocationSuggestion } from "@/lib/integrations";
+import { autoGrow } from "./editable-cell";
 
 interface LocationCellProps {
   tripId: string;
@@ -44,7 +45,7 @@ export function LocationCell({
   const [loading, setLoading] = useState(false);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const sessionRef = useRef<string>("");
   // Set when a suggestion is being applied so the input's blur handler doesn't
   // also commit the stale typed text on top of the pick.
@@ -58,6 +59,9 @@ export function LocationCell({
 
   useLayoutEffect(() => {
     if (!editing) return;
+    // Size the editor to its content so a long place name keeps its wrapped
+    // multi-line layout instead of collapsing to a single line on focus.
+    autoGrow(inputRef.current);
     reposition();
     // The left pane scrolls independently — capture scrolls anywhere so the
     // portal dropdown stays glued to the input (it lives on document.body).
@@ -227,21 +231,24 @@ export function LocationCell({
 
   return (
     <>
-      <input
+      <textarea
         ref={inputRef}
-        type="text"
         value={draft}
+        rows={1}
         autoFocus
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          autoGrow(e.target);
+        }}
         onKeyDown={handleKeyDown}
         onBlur={() => {
           // A suggestion click triggers blur first; pick() handles the commit.
           if (!pickingRef.current) commitText();
         }}
         placeholder={placeholder}
-        className={`w-full bg-transparent border-0 outline-none text-xs py-1 px-1 rounded ring-1 ring-zinc-300 dark:ring-zinc-600 focus:ring-zinc-500 ${className}`}
+        className={`w-full bg-transparent border-0 outline-none text-xs py-1 px-1 rounded ring-1 ring-zinc-300 dark:ring-zinc-600 focus:ring-zinc-500 resize-none overflow-hidden ${className}`}
       />
       {dropdown}
     </>

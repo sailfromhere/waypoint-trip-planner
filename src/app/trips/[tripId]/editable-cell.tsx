@@ -32,6 +32,11 @@ interface EditableCellProps {
   // Render the editor as a <textarea> for fields that hold multi-line content
   // (title, notes). The read view wraps + preserves newlines.
   multiline?: boolean;
+  // For a capped multi-line field (Notes): a max-height utility class applied to
+  // the EDITOR textarea so it scrolls *itself* when content overflows (a focused
+  // textarea with overflow:hidden swallows the wheel and won't scroll the
+  // ancestor). Title leaves this empty → grows unbounded.
+  multilineMaxClass?: string;
 }
 
 // Postgres `time` comes back as "HH:MM:SS". A native <input type="time"> with no
@@ -44,6 +49,15 @@ function toHHMM(v: string | number | null): string {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
 }
 
+// Size a textarea to its content so a multi-line editor doesn't collapse to a
+// fixed row count (and so a short value stays ~1 line, vertically centered by
+// the wrapper). border-box means scrollHeight already includes padding.
+export function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+}
+
 export function EditableCell({
   value,
   type,
@@ -51,6 +65,7 @@ export function EditableCell({
   placeholder = "—",
   className = "",
   multiline = false,
+  multilineMaxClass = "",
 }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -61,6 +76,11 @@ export function EditableCell({
   useEffect(() => {
     if (!editing || !inputRef.current) return;
     inputRef.current.focus();
+    // Size the multi-line editor to its content on open (so it matches the read
+    // view's height/centering instead of springing to a fixed 3 rows).
+    if (multiline && inputRef.current instanceof HTMLTextAreaElement) {
+      autoGrow(inputRef.current);
+    }
     // .select() throws InvalidStateError on date/time inputs, and selecting all
     // of a long multi-line value is unwanted — only select single-line text-like
     // inputs.
@@ -168,17 +188,38 @@ export function EditableCell({
       display = `$${(Number(value) / 100).toFixed(2)}`;
     }
 
+    // h-full makes the whole (tall) cell clickable, not just a thin strip.
+    const base = `w-full cursor-text text-xs py-1 px-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 h-full min-h-[1.5rem] ${
+      !display ? "text-zinc-400" : ""
+    }`;
+
+    if (multiline) {
+      return (
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            startEditing();
+          }}
+          className={`${base} flex flex-col ${className}`}
+        >
+          {/* `my-auto` centers the value vertically when there's free space, but
+              collapses to 0 (top-anchored + scrollable) when content overflows a
+              capped cell — sidesteps the flex `justify-center` overflow top-clip
+              bug. Matches the editor's centering below. */}
+          <div className="my-auto whitespace-pre-wrap break-words">
+            {display || placeholder}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         onClick={(e) => {
           e.stopPropagation();
           startEditing();
         }}
-        // h-full makes the whole (tall) cell clickable, not just a thin strip;
-        // single-line cells center their value, multi-line wrap from the top.
-        className={`w-full cursor-text text-xs py-1 px-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 h-full min-h-[1.5rem] ${
-          !display ? "text-zinc-400" : ""
-        } ${multiline ? "whitespace-pre-wrap break-words" : "flex items-center"} ${className}`}
+        className={`${base} flex items-center ${className}`}
       >
         {display || placeholder}
       </div>
@@ -186,19 +227,31 @@ export function EditableCell({
   }
 
   if (multiline) {
+    // Wrapper carries the height constraint (min-h for title / max-h+scroll for
+    // notes, via `className`) and centers the auto-grown textarea with `my-auto`
+    // — so the editor's vertical alignment + row height match the read view.
     return (
-      <textarea
-        ref={inputRef as React.RefObject<HTMLTextAreaElement>}
-        value={draft}
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={handleKeyDown}
-        rows={3}
-        placeholder={placeholder}
-        className={`w-full bg-transparent border-0 outline-none text-xs py-1 px-1 rounded ring-1 ring-zinc-300 dark:ring-zinc-600 focus:ring-zinc-500 resize-y ${className}`}
-      />
+      <div className={`flex flex-col ${className}`}>
+        <textarea
+          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          value={draft}
+          rows={1}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            autoGrow(e.target);
+          }}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          // overflow-y-auto + a per-field max-height (notes) lets the textarea
+          // scroll ITSELF when focused; autoGrow sets height=scrollHeight but the
+          // CSS max-height caps the render. Title has no cap → grows unbounded
+          // (the scrollbar never appears).
+          className={`w-full my-auto bg-transparent border-0 outline-none text-xs py-1 px-1 rounded ring-1 ring-zinc-300 dark:ring-zinc-600 focus:ring-zinc-500 resize-none overflow-y-auto ${multilineMaxClass}`}
+        />
+      </div>
     );
   }
 

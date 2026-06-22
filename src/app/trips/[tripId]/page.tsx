@@ -261,7 +261,12 @@ export default function TripPage({
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left panel: planning + table — scrolls independently */}
         <div
-          className={`flex-1 overflow-y-auto px-6 pt-6 pb-48 ${mapCollapsed ? "" : "max-w-[60%]"}`}
+          // min-w-0: a flex item defaults to min-width:auto, which can override
+          // max-w-[60%] and refuse to shrink below the inner table's content
+          // width — Safari then squeezes the table's columns to fit instead of
+          // letting its overflow-x-auto wrapper scroll (Chrome is more lenient).
+          // min-w-0 lets the pane hold its allotted width so the table scrolls.
+          className={`flex-1 min-w-0 overflow-y-auto px-6 pt-6 pb-48 ${mapCollapsed ? "" : "max-w-[60%]"}`}
         >
           <TripHeader
             trip={trip}

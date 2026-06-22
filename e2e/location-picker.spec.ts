@@ -64,7 +64,7 @@ test("picking a suggestion stores the name + exact coordinates", async ({ page }
   const locationCell = row.locator("td").nth(4);
   await locationCell.getByText("—").click();
 
-  const input = locationCell.locator("input");
+  const input = locationCell.locator("textarea");
   await input.fill("Old Faithful");
 
   // Dropdown (portaled to body) shows the stubbed candidates.
@@ -102,7 +102,7 @@ test("typing plain text (no pick) triggers the fallback geocode", async ({ page 
   const locationCell = row.locator("td").nth(4);
   await locationCell.getByText("—").click();
 
-  const input = locationCell.locator("input");
+  const input = locationCell.locator("textarea");
   await input.fill("Some Custom Place");
   await input.blur();
 
