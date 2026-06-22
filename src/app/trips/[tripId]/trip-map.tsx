@@ -7,6 +7,7 @@ import Supercluster from "supercluster";
 import type { ItineraryItem } from "@/db/types";
 import type { DriveRoute } from "@/app/api/trips/[tripId]/routes/route";
 import { clusteredBoundsCoords, type Pt } from "@/lib/trip-state/anchor";
+import { computeRouteSegments } from "@/lib/trip-state/route-offsets";
 import { isUntitled, UNTITLED_LABEL } from "@/lib/format";
 
 const DAY_COLORS = [
@@ -21,10 +22,6 @@ const DAY_COLORS = [
   "#14b8a6",
   "#6366f1",
 ];
-
-// Day-sequence connectors render in a neutral gray so they read as secondary
-// and never get confused with the day-colored drive routes.
-const CONNECTOR_COLOR = "#9ca3af";
 
 const CATEGORY_META: Record<string, { icon: string; label: string }> = {
   drive: { icon: "🚗", label: "Drive" },
@@ -550,34 +547,50 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
       }
       routeSourceIds.current = [];
 
-      // Drive routes — prefer the persisted geometry on the item; fall back to a
-      // freshly-routed geometry from the routes query, then to a straight line.
+      // Drive routes — drawn only from real routed geometry (persisted on the item
+      // or freshly routed by the routes query). A drive with no routed geometry yet
+      // draws nothing rather than a misleading straight line.
       if (!hiddenCategories.has("drive")) {
+        // Resolve every drive's geometry FIRST, so computeRouteSegments can split
+        // each route into runs and offset only the stretches it shares with a
+        // different day — overlapping roads fan into parallel lanes while the
+        // unique stretches stay on the true road.
+        const driveGeoms: { item: ItineraryItem; geometry: GeoJSON.LineString }[] = [];
         for (const item of items) {
           if (item.category !== "drive") continue;
-          let geometry: GeoJSON.LineString | undefined =
+          const geometry: GeoJSON.LineString | undefined =
             item.routeGeometry ?? drivesById.get(item.id)?.geometry;
-          if (!geometry) {
-            if (
-              item.originLng == null ||
-              item.originLat == null ||
-              item.destinationLng == null ||
-              item.destinationLat == null
-            )
-              continue;
-            geometry = {
-              type: "LineString",
-              coordinates: [
-                [item.originLng, item.originLat],
-                [item.destinationLng, item.destinationLat],
-              ],
-            };
-          }
+          if (!geometry) continue;
+          driveGeoms.push({ item, geometry });
+        }
 
+        const segsByItem = computeRouteSegments(
+          driveGeoms.map(({ item, geometry }) => ({
+            itemId: item.id,
+            geometry,
+            // Color bucket — only cross-day overlaps are fanned apart.
+            day: item.date,
+          })),
+          3 // 3px lanes — tight parallels, small line-offset overshoot.
+        );
+
+        for (const { item } of driveGeoms) {
+          const segments = segsByItem.get(item.id);
+          if (!segments || segments.length === 0) continue;
           const sourceId = `drive-${item.id}`;
           map.addSource(sourceId, {
             type: "geojson",
-            data: { type: "Feature", properties: {}, geometry },
+            // One feature per offset-tagged run. `itemId` is carried so the
+            // (upcoming) hover handler can identify the drive; `offset` drives the
+            // per-feature line-offset below.
+            data: {
+              type: "FeatureCollection",
+              features: segments.map((s) => ({
+                type: "Feature" as const,
+                properties: { itemId: item.id, offset: s.offset },
+                geometry: { type: "LineString" as const, coordinates: s.coordinates },
+              })),
+            },
           });
           map.addLayer({
             id: sourceId,
@@ -586,59 +599,20 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               "line-color": getDayColor(item.date),
-              // Thin when zoomed out (lines looked too heavy), full weight in close.
-              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 3, 12, 5],
+              // Thin lines throughout — now that overlapping routes sit side-by-side
+              // (line-offset), heavy strokes read as one fuzzy blob. Slim at every
+              // zoom, only modestly thicker up close.
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 9, 1.8, 14, 2.5],
               "line-opacity": 0.9,
+              // Per-segment lateral offset: 0 on unique stretches, fanned where
+              // shared with another day. line-offset is data-driven in MapLibre.
+              "line-offset": ["get", "offset"],
             },
           });
           routeSourceIds.current.push(sourceId);
         }
       }
 
-      // Day-sequence connectors — client-side straight lines between consecutive
-      // same-day stops (no routing call; they only signal sequence).
-      const byDate = new Map<string, ItineraryItem[]>();
-      for (const item of items) {
-        if (!item.date) continue;
-        if (hiddenCategories.has(item.category)) continue;
-        if (item.destinationLat == null || item.destinationLng == null) continue;
-        if (!byDate.has(item.date)) byDate.set(item.date, []);
-        byDate.get(item.date)!.push(item);
-      }
-      for (const [date, dayItems] of byDate) {
-        dayItems.sort((a, b) => a.sortOrder - b.sortOrder);
-        for (let i = 0; i < dayItems.length - 1; i++) {
-          const from = dayItems[i];
-          const to = dayItems[i + 1];
-          const sourceId = `conn-${date}-${i}`;
-          map.addSource(sourceId, {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              properties: {},
-              geometry: {
-                type: "LineString",
-                coordinates: [
-                  [from.destinationLng!, from.destinationLat!],
-                  [to.destinationLng!, to.destinationLat!],
-                ],
-              },
-            },
-          });
-          map.addLayer({
-            id: sourceId,
-            type: "line",
-            source: sourceId,
-            paint: {
-              "line-color": CONNECTOR_COLOR,
-              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.75, 10, 1.5],
-              "line-opacity": 0.55,
-              "line-dasharray": [2, 2],
-            },
-          });
-          routeSourceIds.current.push(sourceId);
-        }
-      }
     };
 
     // mapReady fires on the map's 'load' event, so the style is ready here —
@@ -831,14 +805,10 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
             </div>
           ))}
           {hasDrives && (
-            <div className="pt-1 mt-1 border-t border-zinc-200 dark:border-zinc-700 space-y-1">
+            <div className="pt-1 mt-1 border-t border-zinc-200 dark:border-zinc-700">
               <div className="flex items-center gap-1.5">
                 <span className="inline-block w-5 h-0.5 bg-zinc-500" />
                 <span>Drive route</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block w-5 border-t border-dashed border-zinc-400" />
-                <span>Connection</span>
               </div>
             </div>
           )}
