@@ -3,8 +3,10 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import Supercluster from "supercluster";
 import type { ItineraryItem } from "@/db/types";
-import type { DayRoute, DriveRoute } from "@/app/api/trips/[tripId]/routes/route";
+import type { DriveRoute } from "@/app/api/trips/[tripId]/routes/route";
+import { clusteredBoundsCoords, type Pt } from "@/lib/trip-state/anchor";
 
 const DAY_COLORS = [
   "#3b82f6",
@@ -72,40 +74,91 @@ function getTileStyle(): string | maplibregl.StyleSpecification {
   };
 }
 
-interface MapMarkerPoint {
-  key: string;
+// Point properties carried through Supercluster onto each leaf feature.
+interface PointProps {
   itemId: string;
-  lat: number;
-  lng: number;
   icon: string;
   color: string;
   title: string;
   label: string;
-  date: string | null;
-  size: number;
-  offset: [number, number];
+  priority: number; // itinerary order — lower wins a label-collision tie
 }
 
-function createMarkerElement(point: MapMarkerPoint): HTMLDivElement {
+const MARKER_SIZE = 22;
+
+// Shared label style — a small white-haloed caption under a marker, legible over
+// any basemap. Used by both point markers and cluster bubbles.
+function styleLabel(el: HTMLDivElement): void {
+  el.style.cssText = `
+    position: absolute; top: calc(100% + 1px); left: 50%;
+    transform: translateX(-50%); white-space: nowrap; pointer-events: none;
+    font-size: 11px; line-height: 1.1; font-weight: 600; color: #27272a;
+    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+  `;
+}
+
+// A point marker: emoji in a white circle with a day-colored ring, plus a
+// place-name label underneath (collision-managed by applyLabelCollision).
+function createPointElement(p: PointProps): { el: HTMLDivElement; labelEl: HTMLDivElement } {
   const el = document.createElement("div");
-  const s = point.size;
+  const s = MARKER_SIZE;
+  // NOTE: do NOT set `position` here — MapLibre's `.maplibregl-marker` class sets
+  // `position: absolute` to place the marker, and an inline `position: relative`
+  // would override it and make every marker float to its in-flow position. The
+  // absolute marker is already a containing block for the absolute label child.
   el.style.cssText = `
     width: ${s}px; height: ${s}px; border-radius: 50%;
-    background: white; border: 3px solid ${point.color};
+    background: white; border: 1.5px solid ${p.color};
     display: flex; align-items: center; justify-content: center;
     font-size: ${Math.round(s * 0.5)}px; cursor: pointer;
     box-shadow: 0 2px 4px rgba(0,0,0,0.3);
   `;
-  el.textContent = point.icon;
-  el.title = point.title;
+
+  const iconSpan = document.createElement("span");
+  iconSpan.className = "waypoint-icon";
+  iconSpan.textContent = p.icon;
+  el.appendChild(iconSpan);
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "waypoint-label";
+  labelEl.textContent = p.label;
+  styleLabel(labelEl);
+  el.appendChild(labelEl);
 
   el.addEventListener("mouseenter", () => {
-    el.style.outline = `3px solid ${point.color}`;
+    el.style.outline = `1.5px solid ${p.color}`;
     el.style.outlineOffset = "2px";
+    labelEl.style.visibility = "visible"; // hovered marker always shows its name
+    labelEl.style.zIndex = "1";
   });
   el.addEventListener("mouseleave", () => {
     el.style.outline = "none";
   });
+
+  return { el, labelEl };
+}
+
+// A cluster bubble: neutral zinc circle with the member count, plus a label
+// naming one member + "+N more" (matches the Apple-Maps reference).
+function createClusterElement(count: number, label: string): HTMLDivElement {
+  const s = Math.round(Math.min(42, 24 + count * 1.6));
+  const el = document.createElement("div");
+  // No inline `position` — see createPointElement (MapLibre needs absolute).
+  el.style.cssText = `
+    width: ${s}px; height: ${s}px; border-radius: 50%;
+    background: #3f3f46; border: 2px solid white; color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: ${Math.round(s * 0.42)}px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.35);
+  `;
+  const countSpan = document.createElement("span");
+  countSpan.textContent = String(count);
+  el.appendChild(countSpan);
+
+  const labelEl = document.createElement("div");
+  labelEl.textContent = label;
+  styleLabel(labelEl);
+  el.appendChild(labelEl);
 
   return el;
 }
@@ -145,25 +198,42 @@ class FitControl implements maplibregl.IControl {
 
 interface TripMapProps {
   items: ItineraryItem[];
-  days: DayRoute[];
   drives: DriveRoute[];
   selectedItemId: string | null;
   onItemSelect: (itemId: string | null) => void;
 }
 
-export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: TripMapProps) {
+interface MarkerPoint {
+  itemId: string;
+  lat: number;
+  lng: number;
+  props: PointProps;
+}
+
+export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  // All rendered markers (points + clusters), keyed `point-<id>` / `cluster-<id>`.
   const markersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
+  // Per-shown-point label metadata, rebuilt each render; drives label collision.
+  const pointMetaRef = useRef<Map<string, { labelEl: HTMLDivElement; priority: number }>>(
+    new Map()
+  );
+  const indexRef = useRef<Supercluster<PointProps> | null>(null);
   const routeSourceIds = useRef<string[]>([]);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
   // Stable refs so the one-time init effect can call the latest callbacks
   // without re-creating the map.
   const fitAllRef = useRef<() => void>(() => {});
+  const renderClustersRef = useRef<() => void>(() => {});
   const onSelectRef = useRef(onItemSelect);
+  const selectedRef = useRef(selectedItemId);
   useEffect(() => {
     onSelectRef.current = onItemSelect;
   }, [onItemSelect]);
+  useEffect(() => {
+    selectedRef.current = selectedItemId;
+  }, [selectedItemId]);
   const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
   const [iconOverrides, setIconOverrides] = useState<Record<string, string>>(loadIconOverrides);
   const [showIconEditor, setShowIconEditor] = useState(false);
@@ -207,65 +277,47 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
 
   // Markers for non-drive items only — drives are drawn as lines (no start/end
   // icons), per the "a line is enough" requirement.
-  const markerPoints: MapMarkerPoint[] = useMemo(() => {
-    const points: MapMarkerPoint[] = [];
+  const markerPoints: MarkerPoint[] = useMemo(() => {
+    const points: MarkerPoint[] = [];
+    let priority = 0;
     for (const item of items) {
       if (item.category === "drive") continue;
       if (hiddenCategories.has(item.category)) continue;
       if (item.destinationLat == null || item.destinationLng == null) continue;
       points.push({
-        key: item.id,
         itemId: item.id,
         lat: item.destinationLat,
         lng: item.destinationLng,
-        icon: getIcon(item.category),
-        color: getDayColor(item.date),
-        title: item.title,
-        label: item.destinationName ?? item.title,
-        date: item.date,
-        size: 32,
-        offset: [0, 0],
+        props: {
+          itemId: item.id,
+          icon: getIcon(item.category),
+          color: getDayColor(item.date),
+          title: item.title,
+          label: item.destinationName ?? item.title,
+          priority: priority++,
+        },
       });
     }
-
-    // Fan out markers that land on the same coordinate.
-    const byCoord = new Map<string, MapMarkerPoint[]>();
-    for (const p of points) {
-      const k = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
-      const list = byCoord.get(k) ?? [];
-      list.push(p);
-      byCoord.set(k, list);
-    }
-    for (const group of byCoord.values()) {
-      if (group.length < 2) continue;
-      const radius = 12;
-      group.forEach((p, i) => {
-        const angle = (2 * Math.PI * i) / group.length;
-        p.offset = [
-          Math.round(Math.cos(angle) * radius),
-          Math.round(Math.sin(angle) * radius),
-        ];
-      });
-    }
-
     return points;
   }, [items, hiddenCategories, getDayColor, getIcon]);
 
-  // All coordinates worth fitting into view (markers + drive endpoints).
+  // All coordinates worth fitting into view (markers + drive endpoints), then
+  // trimmed to the trip's main cluster so a long home→destination leg doesn't
+  // zoom the whole map out (#2 smart fit-bounds).
   const fitCoords: [number, number][] = useMemo(() => {
-    const coords: [number, number][] = [];
+    const pts: Pt[] = [];
     for (const item of items) {
       if (hiddenCategories.has(item.category)) continue;
       if (item.category === "drive") {
         if (item.originLat != null && item.originLng != null)
-          coords.push([item.originLng, item.originLat]);
+          pts.push({ lat: item.originLat, lng: item.originLng });
         if (item.destinationLat != null && item.destinationLng != null)
-          coords.push([item.destinationLng, item.destinationLat]);
+          pts.push({ lat: item.destinationLat, lng: item.destinationLng });
       } else if (item.destinationLat != null && item.destinationLng != null) {
-        coords.push([item.destinationLng, item.destinationLat]);
+        pts.push({ lat: item.destinationLat, lng: item.destinationLng });
       }
     }
-    return coords;
+    return clusteredBoundsCoords(pts).map((p) => [p.lng, p.lat] as [number, number]);
   }, [items, hiddenCategories]);
 
   const coordSignature = useMemo(
@@ -284,6 +336,140 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
     fitAllRef.current = fitAll;
   }, [fitAll]);
 
+  // Hide point labels that would overlap a higher-priority label. Clusters keep
+  // their label; the selected (and hovered) marker's label always wins. Uses
+  // `visibility` (not `display`) so hidden labels still report a layout rect we
+  // can measure on the next pass.
+  const applyLabelCollision = useCallback(() => {
+    const sel = selectedRef.current;
+    const entries = [...pointMetaRef.current.entries()].sort((a, b) => {
+      const as = a[0] === `point-${sel}` ? 0 : 1;
+      const bs = b[0] === `point-${sel}` ? 0 : 1;
+      if (as !== bs) return as - bs;
+      return a[1].priority - b[1].priority;
+    });
+    const placed: { l: number; r: number; t: number; b: number }[] = [];
+    for (const [, meta] of entries) {
+      const rect = meta.labelEl.getBoundingClientRect();
+      const box = { l: rect.left, r: rect.right, t: rect.top, b: rect.bottom };
+      const overlaps = placed.some(
+        (q) => !(box.r < q.l || box.l > q.r || box.b < q.t || box.t > q.b)
+      );
+      if (overlaps) {
+        meta.labelEl.style.visibility = "hidden";
+      } else {
+        meta.labelEl.style.visibility = "visible";
+        placed.push(box);
+      }
+    }
+  }, []);
+
+  // Render the current view's clusters/points as DOM markers, diffing against
+  // what's already on the map. Stable (uses refs) so the init effect can bind it
+  // to map move/zoom without re-creating the map.
+  const renderClusters = useCallback(() => {
+    const map = mapRef.current;
+    const index = indexRef.current;
+    if (!map || !index) return;
+
+    const b = map.getBounds();
+    const bbox: [number, number, number, number] = [
+      b.getWest(),
+      b.getSouth(),
+      b.getEast(),
+      b.getNorth(),
+    ];
+    const zoom = Math.round(map.getZoom());
+    const clusters = index.getClusters(bbox, zoom);
+
+    const activeKeys = new Set<string>();
+    pointMetaRef.current.clear();
+
+    for (const c of clusters) {
+      const [lng, lat] = c.geometry.coordinates;
+      const cp = c.properties as PointProps & {
+        cluster?: boolean;
+        cluster_id?: number;
+        point_count?: number;
+      };
+
+      if (cp.cluster) {
+        const key = `cluster-${cp.cluster_id}`;
+        activeKeys.add(key);
+        if (!markersRef.current.has(key)) {
+          const count = cp.point_count ?? 0;
+          const leaves = index.getLeaves(cp.cluster_id!, 1);
+          const first = (leaves[0]?.properties as PointProps | undefined)?.label ?? "";
+          const label = count > 1 ? `${first} +${count - 1} more` : first;
+          const el = createClusterElement(count, label);
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            try {
+              const ez = index.getClusterExpansionZoom(cp.cluster_id!);
+              map.easeTo({ center: [lng, lat], zoom: ez, duration: 400 });
+            } catch {
+              map.easeTo({ center: [lng, lat], zoom: zoom + 2, duration: 400 });
+            }
+          });
+          const marker = new maplibregl.Marker({ element: el })
+            .setLngLat([lng, lat])
+            .addTo(map);
+          markersRef.current.set(key, marker);
+        } else {
+          markersRef.current.get(key)!.setLngLat([lng, lat]);
+        }
+      } else {
+        const itemId = cp.itemId;
+        const key = `point-${itemId}`;
+        activeKeys.add(key);
+        let marker = markersRef.current.get(key);
+        if (!marker) {
+          const { el } = createPointElement(cp);
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onSelectRef.current(itemId);
+          });
+          marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+          markersRef.current.set(key, marker);
+        } else {
+          marker.setLngLat([lng, lat]);
+          const el = marker.getElement();
+          const iconSpan = el.querySelector(".waypoint-icon");
+          if (iconSpan && iconSpan.textContent !== cp.icon) iconSpan.textContent = cp.icon;
+        }
+        const labelEl = marker.getElement().querySelector(".waypoint-label") as HTMLDivElement;
+        if (labelEl) pointMetaRef.current.set(key, { labelEl, priority: cp.priority });
+      }
+    }
+
+    for (const [key, marker] of markersRef.current) {
+      if (!activeKeys.has(key)) {
+        marker.remove();
+        markersRef.current.delete(key);
+      }
+    }
+
+    applyLabelCollision();
+  }, [applyLabelCollision]);
+  useEffect(() => {
+    renderClustersRef.current = renderClusters;
+  }, [renderClusters]);
+
+  // (Re)build the Supercluster index whenever the marker set changes, then
+  // render. Rebuilding also picks up icon-override changes (baked into props).
+  useEffect(() => {
+    const index = new Supercluster<PointProps>({ radius: 60, maxZoom: 16 });
+    index.load(
+      markerPoints.map((p) => ({
+        type: "Feature" as const,
+        properties: p.props,
+        geometry: { type: "Point" as const, coordinates: [p.lng, p.lat] },
+      }))
+    );
+    indexRef.current = index;
+    if (mapReady) renderClusters();
+  }, [markerPoints, mapReady, renderClusters]);
+
   // Init map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -296,10 +482,17 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(new FitControl(() => fitAllRef.current()), "top-right");
     // Trackpad two-finger scroll produces many tiny deltas, so the default
-    // trackpad zoom rate (1/100) feels sluggish — speed it up. Mouse wheel
-    // (setWheelZoomRate, 1/450) already feels good, so leave it.
+    // trackpad zoom rate (1/100) feels sluggish — speed it up. The mouse wheel
+    // felt over-sensitive at the default (1/450), so slow it a touch (1/650).
     map.scrollZoom.setZoomRate(1 / 45);
+    map.scrollZoom.setWheelZoomRate(1 / 650);
     mapRef.current = map;
+
+    // Re-cluster/re-collide on every settle (pan brings new points into view;
+    // zoom merges/splits clusters).
+    const onMove = () => renderClustersRef.current();
+    map.on("moveend", onMove);
+    map.on("zoomend", onMove);
 
     // Gate readiness on the map's 'load' event (style fully ready). Gating on
     // construction caused drive routes to vanish on hide/show: on remount the
@@ -318,54 +511,19 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
     (window as unknown as { __waypointMap?: maplibregl.Map }).__waypointMap = map;
 
     return () => {
+      map.off("moveend", onMove);
+      map.off("zoomend", onMove);
       map.off("load", onLoad);
       map.off("click", onBgClick);
       map.remove();
       mapRef.current = null;
       markersRef.current.clear();
+      pointMetaRef.current.clear();
       routeSourceIds.current = [];
       setMapReady(false);
       delete (window as unknown as { __waypointMap?: maplibregl.Map }).__waypointMap;
     };
   }, []);
-
-  // Sync markers
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-
-    const activeKeys = new Set(markerPoints.map((p) => p.key));
-
-    for (const [key, marker] of markersRef.current) {
-      if (!activeKeys.has(key)) {
-        marker.remove();
-        markersRef.current.delete(key);
-      }
-    }
-
-    for (const point of markerPoints) {
-      if (markersRef.current.has(point.key)) {
-        const marker = markersRef.current.get(point.key)!;
-        marker.setLngLat([point.lng, point.lat]);
-        marker.setOffset(point.offset);
-        // Icon may have changed via override — refresh the element content.
-        const el = marker.getElement();
-        if (el.textContent !== point.icon) el.textContent = point.icon;
-        continue;
-      }
-
-      const el = createMarkerElement(point);
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        onItemSelect(point.itemId);
-      });
-
-      const marker = new maplibregl.Marker({ element: el, offset: point.offset })
-        .setLngLat([point.lng, point.lat])
-        .addTo(map);
-      markersRef.current.set(point.key, marker);
-    }
-  }, [markerPoints, onItemSelect, mapReady]);
 
   // Fit bounds only when the set of coordinates actually changes.
   useEffect(() => {
@@ -374,11 +532,15 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coordSignature, mapReady]);
 
-  // Draw route polylines: drive routes (solid, day-colored) + day connectors
-  // (faint gray dashed).
+  // Draw route polylines: drive routes (solid, day-colored, zoom-scaled width)
+  // drawn from the PERSISTED routeGeometry on each drive item (instant on load,
+  // no OSRM wait), and day connectors (faint gray dashed) built client-side as
+  // straight lines between consecutive same-day stops.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
+
+    const drivesById = new Map(drives.map((d) => [d.itemId, d]));
 
     const draw = () => {
       for (const id of routeSourceIds.current) {
@@ -387,13 +549,13 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
       }
       routeSourceIds.current = [];
 
-      // Drive routes — origin → destination, routed via OSRM (falls back to a
-      // straight line only if routing failed).
+      // Drive routes — prefer the persisted geometry on the item; fall back to a
+      // freshly-routed geometry from the routes query, then to a straight line.
       if (!hiddenCategories.has("drive")) {
-        for (const drive of drives) {
-          const item = items.find((i) => i.id === drive.itemId);
-          if (!item) continue;
-          let geometry = drive.geometry;
+        for (const item of items) {
+          if (item.category !== "drive") continue;
+          let geometry: GeoJSON.LineString | undefined =
+            item.routeGeometry ?? drivesById.get(item.id)?.geometry;
           if (!geometry) {
             if (
               item.originLng == null ||
@@ -411,7 +573,7 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
             };
           }
 
-          const sourceId = `drive-${drive.itemId}`;
+          const sourceId = `drive-${item.id}`;
           map.addSource(sourceId, {
             type: "geojson",
             data: { type: "Feature", properties: {}, geometry },
@@ -422,8 +584,9 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
             source: sourceId,
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
-              "line-color": getDayColor(drive.date),
-              "line-width": 4,
+              "line-color": getDayColor(item.date),
+              // Thin when zoomed out (lines looked too heavy), full weight in close.
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 8, 3, 12, 5],
               "line-opacity": 0.9,
             },
           });
@@ -431,34 +594,35 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
         }
       }
 
-      // Day-sequence connectors between consecutive stops.
-      for (const day of days) {
-        for (let i = 0; i < day.legs.length; i++) {
-          const leg = day.legs[i];
-          let geom = leg.geometry;
-          if (!geom) {
-            const fromItem = items.find((item) => item.id === leg.fromItemId);
-            const toItem = items.find((item) => item.id === leg.toItemId);
-            if (
-              fromItem?.destinationLng == null ||
-              fromItem?.destinationLat == null ||
-              toItem?.destinationLng == null ||
-              toItem?.destinationLat == null
-            )
-              continue;
-            geom = {
-              type: "LineString",
-              coordinates: [
-                [fromItem.destinationLng, fromItem.destinationLat],
-                [toItem.destinationLng, toItem.destinationLat],
-              ],
-            };
-          }
-
-          const sourceId = `conn-${day.date}-${i}`;
+      // Day-sequence connectors — client-side straight lines between consecutive
+      // same-day stops (no routing call; they only signal sequence).
+      const byDate = new Map<string, ItineraryItem[]>();
+      for (const item of items) {
+        if (!item.date) continue;
+        if (hiddenCategories.has(item.category)) continue;
+        if (item.destinationLat == null || item.destinationLng == null) continue;
+        if (!byDate.has(item.date)) byDate.set(item.date, []);
+        byDate.get(item.date)!.push(item);
+      }
+      for (const [date, dayItems] of byDate) {
+        dayItems.sort((a, b) => a.sortOrder - b.sortOrder);
+        for (let i = 0; i < dayItems.length - 1; i++) {
+          const from = dayItems[i];
+          const to = dayItems[i + 1];
+          const sourceId = `conn-${date}-${i}`;
           map.addSource(sourceId, {
             type: "geojson",
-            data: { type: "Feature", properties: {}, geometry: geom },
+            data: {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "LineString",
+                coordinates: [
+                  [from.destinationLng!, from.destinationLat!],
+                  [to.destinationLng!, to.destinationLat!],
+                ],
+              },
+            },
           });
           map.addLayer({
             id: sourceId,
@@ -466,7 +630,7 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
             source: sourceId,
             paint: {
               "line-color": CONNECTOR_COLOR,
-              "line-width": 1.5,
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.75, 10, 1.5],
               "line-opacity": 0.55,
               "line-dasharray": [2, 2],
             },
@@ -486,7 +650,7 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
         map.off("style.load", draw);
       };
     }
-  }, [days, drives, items, hiddenCategories, getDayColor, mapReady]);
+  }, [drives, items, hiddenCategories, getDayColor, mapReady]);
 
   // Popup for the selected item — derived from the item itself (works for
   // drives, which no longer have markers).
@@ -498,6 +662,9 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
       activePopupRef.current.remove();
       activePopupRef.current = null;
     }
+
+    // Re-evaluate label collision so the newly selected marker's label wins.
+    applyLabelCollision();
 
     if (!selectedItemId) return;
     const item = items.find((i) => i.id === selectedItemId);
@@ -546,7 +713,7 @@ export function TripMap({ items, days, drives, selectedItemId, onItemSelect }: T
     popup.on("close", () => {
       if (activePopupRef.current === popup) activePopupRef.current = null;
     });
-  }, [selectedItemId, items, mapReady]);
+  }, [selectedItemId, items, mapReady, applyLabelCollision]);
 
   const presentCategories = [...new Set(items.map((i) => i.category))];
   const hasDrives = presentCategories.includes("drive");

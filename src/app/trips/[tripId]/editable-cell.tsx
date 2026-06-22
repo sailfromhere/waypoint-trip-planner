@@ -139,6 +139,10 @@ export function EditableCell({
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    // Keep keystrokes inside the editor — the row is a dnd-kit draggable whose
+    // KeyboardSensor starts a drag on Space/Enter. Without this, typing a space
+    // (or Enter) in a cell bubbles up and lifts the whole row.
+    e.stopPropagation();
     if (e.key === "Escape") {
       setDraft(currentString());
       setEditing(false);
@@ -168,6 +172,7 @@ export function EditableCell({
         value={String(value ?? "")}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => {
           onSave(e.target.value);
         }}

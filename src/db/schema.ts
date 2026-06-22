@@ -119,6 +119,17 @@ export const itineraryItems = pgTable("itinerary_items", {
     .notNull()
     .default({}),
 
+  // Routed drive geometry CACHE (drive items only). Machine-derived from the
+  // routing API, keyed by routeSignature (a fingerprint of the endpoint coords
+  // it was computed from). NOT user-editable and deliberately OUTSIDE the
+  // provenance/sacred-data system — a pure cache so the map can draw drives
+  // instantly on load (like marker coords) instead of re-hitting OSRM every
+  // refresh. Recomputed only when an endpoint moves (signature mismatch).
+  routeGeometry: jsonb("route_geometry").$type<GeoJSON.LineString>(),
+  routeDistanceMeters: integer("route_distance_meters"),
+  routeDurationSeconds: integer("route_duration_seconds"),
+  routeSignature: text("route_signature"),
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -88,7 +88,15 @@ test("text cells are editable and the edit persists", async ({ page }) => {
   const input = row.locator("textarea").first();
   await expect(input).toBeVisible();
   await input.fill("Old Faithful EDITED");
+
+  // Wait for the write to COMMIT (the PATCH response) before reloading — the
+  // optimistic update makes the assertion below pass immediately, but a bare
+  // reload would abort the in-flight request and the edit would be lost.
+  const commit = page.waitForResponse(
+    (r) => /\/items\//.test(r.url()) && r.request().method() === "PATCH"
+  );
   await input.blur();
+  await commit;
 
   await expect(row).toContainText("Old Faithful EDITED");
 
@@ -97,6 +105,31 @@ test("text cells are editable and the edit persists", async ({ page }) => {
   await expect(
     page.locator("tr", { hasText: "Old Faithful EDITED" })
   ).toBeVisible();
+});
+
+test("typing a space in a cell keeps editing (no dnd-kit row drag)", async ({
+  page,
+}) => {
+  await page.goto(`/trips/${tripId}`);
+
+  await page
+    .locator("tr", { hasText: "Hotel Stay" })
+    .first()
+    .getByText("Hotel Stay", { exact: true })
+    .click();
+
+  // The title editor (stable placeholder) — NOT scoped by the row's title text,
+  // which we're about to clear (re-resolving a `hasText:"Hotel Stay"` row would
+  // then fail), and not the panel textareas elsewhere on the page.
+  const input = page.getByPlaceholder("Untitled");
+  await expect(input).toBeVisible();
+  await input.fill("");
+  // Real keystrokes (not fill()) so the Space keydown actually fires. The row is
+  // a dnd-kit draggable whose KeyboardSensor starts a drag on Space — if the
+  // editor doesn't stop keydown propagation, the space lifts the row and the
+  // remaining characters never land, so the value loses its spaces.
+  await input.pressSequentially("Hotel by the Lake");
+  await expect(input).toHaveValue("Hotel by the Lake");
 });
 
 test("start time saves and displays as 24h HH:MM (no seconds)", async ({
@@ -142,12 +175,23 @@ test("map markers are present after a reload", async ({ page }) => {
 
   await page.reload();
   await expect(page.locator(".maplibregl-map")).toBeVisible();
+  await expect(page.locator(".maplibregl-marker").first()).toBeVisible({ timeout: 15000 });
 
   // BUG 1: under StrictMode the map is torn down and rebuilt, but markersRef
   // still points at the dead map, so nothing is re-added → 0 markers.
-  // Drives render as lines (no markers), so the seed yields 2 markers:
-  // the activity destination and the lodging destination.
-  await expect(page.locator(".maplibregl-marker")).toHaveCount(2);
+  // Drives render as lines (no markers), so the seed yields 2 destination
+  // markers — but they're ~30km apart and cluster at the default fit zoom, so
+  // zoom in to split the cluster before asserting both point markers exist.
+  await page.evaluate(() => {
+    const m = (
+      window as unknown as {
+        __waypointMap?: { setCenter(c: [number, number]): void; setZoom(z: number): void };
+      }
+    ).__waypointMap;
+    m?.setCenter([-110.95, 44.56]);
+    m?.setZoom(9);
+  });
+  await expect(page.locator(".maplibregl-marker .waypoint-icon")).toHaveCount(2);
 });
 
 test("drive items show separate origin and destination Location inputs", async ({

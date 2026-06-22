@@ -350,7 +350,6 @@ export default function TripPage({
                 >
                   <TripMap
                     items={items ?? []}
-                    days={routes?.days ?? []}
                     drives={routes?.drives ?? []}
                     selectedItemId={selectedItemId}
                     onItemSelect={handleMapItemSelect}

@@ -18,8 +18,11 @@ type MapHandle = { getStyle(): { layers: { id: string }[] } };
 async function driveLayerCount(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const m = (window as unknown as { __waypointMap?: MapHandle }).__waypointMap;
-    if (!m) return -1;
-    return m.getStyle().layers.filter((l) => l.id.startsWith("drive-")).length;
+    // getStyle() can be momentarily undefined mid style-load — return -1 so the
+    // poll keeps retrying instead of throwing.
+    const style = m && typeof m.getStyle === "function" ? m.getStyle() : null;
+    if (!style || !style.layers) return -1;
+    return style.layers.filter((l) => l.id.startsWith("drive-")).length;
   });
 }
 
@@ -94,6 +97,56 @@ test("[#5] drive routes survive hide/show of the map", async ({ page }) => {
   await expect.poll(() => driveLayerCount(page), { timeout: 25000 }).toBeGreaterThan(0);
 });
 
+test("[#1/#d] nearby markers cluster at low zoom, split into labeled points zoomed in", async ({
+  page,
+}) => {
+  await page.goto(`/trips/${tripId}`);
+  await expect(page.locator(".maplibregl-map")).toBeVisible();
+  // At the default fit the two nearby day-1 stops are already clustered, so wait
+  // for any marker (the cluster bubble) rather than a point icon.
+  await expect(page.locator(".maplibregl-marker").first()).toBeVisible({ timeout: 15000 });
+
+  const pointIcons = page.locator(".maplibregl-marker .waypoint-icon");
+  const clusters = page.locator(".maplibregl-marker:not(:has(.waypoint-icon))");
+
+  // Zoom way out → the two day-1 stops (~30km apart) merge into one cluster.
+  await page.evaluate(() => {
+    const m = (
+      window as unknown as {
+        __waypointMap?: { setCenter(c: [number, number]): void; setZoom(z: number): void };
+      }
+    ).__waypointMap;
+    m?.setCenter([-110.95, 44.56]);
+    m?.setZoom(6);
+  });
+  await expect.poll(() => clusters.count()).toBeGreaterThan(0);
+  await expect.poll(() => pointIcons.count()).toBe(0);
+
+  // Zoom in → the cluster splits into individual, labeled point markers.
+  await page.evaluate(() => {
+    const m = (
+      window as unknown as {
+        __waypointMap?: { setCenter(c: [number, number]): void; setZoom(z: number): void };
+      }
+    ).__waypointMap;
+    m?.setCenter([-110.95, 44.56]);
+    m?.setZoom(9);
+  });
+  await expect.poll(() => pointIcons.count()).toBe(2);
+  await expect.poll(() => clusters.count()).toBe(0);
+  await expect(page.locator(".waypoint-label").first()).toBeVisible();
+
+  // Regression guard: markers must stay MapLibre-positioned (`position:absolute`).
+  // An inline `position:relative` on the marker element (added for a label
+  // containing block) overrides the class and makes every marker float to its
+  // in-flow spot ("markers all over the place").
+  const pos = await page
+    .locator(".maplibregl-marker:has(.waypoint-icon)")
+    .first()
+    .evaluate((el) => getComputedStyle(el).position);
+  expect(pos).toBe("absolute");
+});
+
 test("[#4] Fit button sits with the map zoom controls", async ({ page }) => {
   await page.goto(`/trips/${tripId}`);
   await expect(page.locator(".maplibregl-map")).toBeVisible();
@@ -106,7 +159,20 @@ test("[#6] clicking empty map deselects the table row", async ({ page }) => {
   await page.goto(`/trips/${tripId}`);
   await expect(page.locator(".maplibregl-marker").first()).toBeVisible();
 
-  await page.locator(".maplibregl-marker").first().click();
+  // Zoom in so the clustered day-1 stops split into individual point markers
+  // (a cluster bubble would zoom-to-expand on click, not select a row).
+  await page.evaluate(() => {
+    const m = (
+      window as unknown as {
+        __waypointMap?: { setCenter(c: [number, number]): void; setZoom(z: number): void };
+      }
+    ).__waypointMap;
+    m?.setCenter([-110.95, 44.56]);
+    m?.setZoom(9);
+  });
+  const point = page.locator(".maplibregl-marker:has(.waypoint-icon)").first();
+  await expect(point).toBeVisible();
+  await point.click();
   await expect(page.locator("tr.bg-blue-50")).toHaveCount(1);
 
   // Click an empty corner of the map canvas (markers/legend are elsewhere).

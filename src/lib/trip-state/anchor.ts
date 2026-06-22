@@ -55,3 +55,23 @@ export function tripAnchor(
 ): Pt | undefined {
   return largestClusterCentroid(itemCoords(items));
 }
+
+// For fit-bounds: keep only the coords near the trip's main cluster and drop
+// far outliers (e.g. a home → national-park drive endpoint that would otherwise
+// zoom the map all the way out and cram the activity cluster). We anchor on the
+// largest cluster's centroid and keep everything within `keepDeg` of it.
+//
+// Falls back to ALL coords when filtering would leave too few (<2) — tiny or
+// single-location trips should still frame to their points, never to emptiness.
+export function clusteredBoundsCoords(
+  pts: Pt[],
+  keepDeg = CLUSTER_DEG * 1.5
+): Pt[] {
+  if (pts.length < 2) return pts;
+  const center = largestClusterCentroid(pts);
+  if (!center) return pts;
+  const kept = pts.filter(
+    (p) => Math.hypot(p.lat - center.lat, p.lng - center.lng) <= keepDeg
+  );
+  return kept.length >= 2 ? kept : pts;
+}

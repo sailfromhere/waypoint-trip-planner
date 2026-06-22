@@ -142,6 +142,10 @@ export function LocationCell({
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    // Keep keystrokes inside the editor — the row is a dnd-kit draggable whose
+    // KeyboardSensor starts a drag on Space/Enter (typing a space would lift the
+    // whole row otherwise).
+    e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
       close();
