@@ -1,4 +1,4 @@
-import type { ItineraryItem } from "@/db/types";
+import type { ItineraryItem, FieldProvenance } from "@/db/types";
 
 /**
  * Deterministic schedule sequencing — auto-fill blank start/end times.
@@ -62,6 +62,17 @@ function isBooked(item: ItineraryItem): boolean {
   return item.confirmationStatus === "booked";
 }
 
+// An ANCHOR is a time we must not move: one the human set (user_provided) or a
+// booked item's time. A previously auto-filled time (historical_estimate) is
+// NOT an anchor — it's our own prior output, so re-running auto-schedule after
+// the user changes a real anchor must recompute (re-flow) it. (Without this the
+// first run "locks" the whole day and a second run does nothing.)
+function isUserAnchor(item: ItineraryItem): boolean {
+  if (isBooked(item)) return true;
+  const prov = (item.fieldProvenance ?? {}) as FieldProvenance;
+  return prov.startTime === "user_provided";
+}
+
 function durationOf(
   item: ItineraryItem,
   driveSecondsById?: Map<string, number>
@@ -94,8 +105,10 @@ export function sequenceDay(
   const ordered = [...items].sort((a, b) => a.sortOrder - b.sortOrder);
   if (ordered.length === 0) return [];
 
-  // Seed the cursor from the earliest existing anchor, else a default.
+  // Seed the cursor from the earliest USER/BOOKED anchor (not a prior auto-fill),
+  // else a default.
   const firstAnchor = ordered
+    .filter(isUserAnchor)
     .map((i) => parseMinutes(i.startTime))
     .find((m): m is number => m != null);
   let cursor = opts?.dayStartMinutes ?? firstAnchor ?? DEFAULT_DAY_START_MINUTES;
@@ -106,32 +119,41 @@ export function sequenceDay(
     const anchor = parseMinutes(item.startTime);
     const dur = durationOf(item, driveSecondsById);
 
-    if (anchor != null) {
+    if (anchor != null && isUserAnchor(item)) {
       // Respect a human/booked time: snap the cursor forward to it (never
       // backwards — keep monotonic), then advance past it. No change emitted.
       cursor = Math.max(cursor, anchor) + dur;
       continue;
     }
 
-    // Blank start. A booked item with no start is still hard-locked (we can't
-    // write its facts) — advance the cursor but don't propose a change.
+    // A booked item with no usable user time is hard-locked (we can't write its
+    // facts) — advance the cursor but don't propose a change.
     if (isBooked(item)) {
       cursor += dur;
       continue;
     }
 
+    // Blank OR a prior auto-fill (historical_estimate): (re)compute from cursor.
     const start = cursor;
     const knownDuration =
       (item.category === "drive" &&
         (driveSecondsById?.get(item.id) ?? 0) > 0) ||
       (item.durationMinutes != null && item.durationMinutes > 0);
+    const end = knownDuration ? start + dur : null;
 
-    changes.push({
-      itemId: item.id,
-      startTime: formatMinutes(start),
-      endTime: knownDuration ? formatMinutes(start + dur) : null,
-      before: { startTime: item.startTime, endTime: item.endTime },
-    });
+    // Skip a no-op (idempotent re-runs / unchanged days) so the Undo banner
+    // doesn't claim to have "filled" times that didn't move.
+    const unchanged =
+      parseMinutes(item.startTime) === start &&
+      (parseMinutes(item.endTime) ?? null) === end;
+    if (!unchanged) {
+      changes.push({
+        itemId: item.id,
+        startTime: formatMinutes(start),
+        endTime: end != null ? formatMinutes(end) : null,
+        before: { startTime: item.startTime, endTime: item.endTime },
+      });
+    }
 
     cursor = start + dur;
   }

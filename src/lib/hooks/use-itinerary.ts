@@ -36,6 +36,22 @@ export function useCreateItem(tripId: string) {
   });
 }
 
+// Item fields that change what the routes API computes (it groups by date,
+// orders by sortOrder, and routes drives between endpoint COORDS). When one of
+// these changes we must also invalidate the routes query so OSRM re-routes —
+// e.g. picking a drive's From/To fills coords, which should produce a routed
+// duration (and feed the S7-6 auto-fill). Plain item edits (title/notes/etc.)
+// skip this so we don't re-hit OSRM on every keystroke.
+const ROUTING_FIELDS = new Set([
+  "originLat",
+  "originLng",
+  "destinationLat",
+  "destinationLng",
+  "date",
+  "sortOrder",
+  "category",
+]);
+
 export function useUpdateItem(tripId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -62,11 +78,27 @@ export function useUpdateItem(tripId: string) {
         "items",
       ]);
       if (prev) {
+        // Mirror the server's provenance stamping in the optimistic cache so a
+        // follow-on read (e.g. the sequencer's user-anchor check, or the next
+        // auto-schedule) sees correct provenance immediately — not only after
+        // the refetch settles. Clearing a field drops its provenance.
+        const source = (data._provenance as string) ?? "user_provided";
         qc.setQueryData(
           ["trips", tripId, "items"],
-          prev.map((item) =>
-            item.id === itemId ? { ...item, ...data } : item
-          )
+          prev.map((item) => {
+            if (item.id !== itemId) return item;
+            const merged = { ...item, ...data } as Record<string, unknown>;
+            delete merged._provenance;
+            const prov = { ...(item.fieldProvenance ?? {}) } as Record<string, string>;
+            for (const k of Object.keys(data)) {
+              if (k === "_provenance" || k === "fieldProvenance") continue;
+              const v = data[k];
+              if (v === null || v === "") delete prov[k];
+              else prov[k] = source;
+            }
+            merged.fieldProvenance = prov;
+            return merged as unknown as ItineraryItem;
+          })
         );
       }
       return { prev };
@@ -75,8 +107,11 @@ export function useUpdateItem(tripId: string) {
       if (ctx?.prev)
         qc.setQueryData(["trips", tripId, "items"], ctx.prev);
     },
-    onSettled: () => {
+    onSettled: (_data, _err, vars) => {
       qc.invalidateQueries({ queryKey: ["trips", tripId, "items"] });
+      if (vars && Object.keys(vars.data).some((k) => ROUTING_FIELDS.has(k))) {
+        qc.invalidateQueries({ queryKey: ["trips", tripId, "routes"] });
+      }
     },
   });
 }

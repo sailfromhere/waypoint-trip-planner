@@ -18,12 +18,18 @@ import {
 } from "@/lib/hooks/use-itinerary";
 import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state/sequence";
 import { EditableCell } from "./editable-cell";
+import { LocationCell } from "./location-cell";
 
 const col = createColumnHelper<ItineraryItem>();
 
+type LocationKind = "origin" | "destination";
+
 function useColumns(
+  tripId: string,
   onUpdate: (itemId: string, field: string, value: string | number | null) => void,
-  onDelete: (itemId: string) => void
+  onDelete: (itemId: string) => void,
+  onPickLocation: (itemId: string, kind: LocationKind, name: string, lat: number, lng: number) => void,
+  onTextLocation: (itemId: string, field: string, value: string | null) => void
 ): ColumnDef<ItineraryItem, unknown>[] {
   return useMemo(
     () =>
@@ -89,31 +95,34 @@ function useColumns(
                 <div className="flex flex-col gap-0.5" data-testid="drive-location">
                   <div data-testid="drive-origin" className="flex items-center gap-1">
                     <span className="text-[10px] text-zinc-400 shrink-0">From</span>
-                    <EditableCell
+                    <LocationCell
+                      tripId={tripId}
                       value={item.originName}
-                      type="text"
                       placeholder="origin"
-                      onSave={(v) => onUpdate(item.id, "originName", v)}
+                      onPick={(n, lat, lng) => onPickLocation(item.id, "origin", n, lat, lng)}
+                      onText={(v) => onTextLocation(item.id, "originName", v)}
                     />
                   </div>
                   <div data-testid="drive-dest" className="flex items-center gap-1">
                     <span className="text-[10px] text-zinc-400 shrink-0">To</span>
-                    <EditableCell
+                    <LocationCell
+                      tripId={tripId}
                       value={item.destinationName}
-                      type="text"
                       placeholder="destination"
-                      onSave={(v) => onUpdate(item.id, "destinationName", v)}
+                      onPick={(n, lat, lng) => onPickLocation(item.id, "destination", n, lat, lng)}
+                      onText={(v) => onTextLocation(item.id, "destinationName", v)}
                     />
                   </div>
                 </div>
               );
             }
             return (
-              <EditableCell
+              <LocationCell
+                tripId={tripId}
                 value={item.destinationName}
-                type="text"
                 placeholder="—"
-                onSave={(v) => onUpdate(item.id, "destinationName", v)}
+                onPick={(n, lat, lng) => onPickLocation(item.id, "destination", n, lat, lng)}
+                onText={(v) => onTextLocation(item.id, "destinationName", v)}
               />
             );
           },
@@ -171,7 +180,7 @@ function useColumns(
           ),
         }),
       ] as ColumnDef<ItineraryItem, unknown>[],
-    [onUpdate, onDelete]
+    [tripId, onUpdate, onDelete, onPickLocation, onTextLocation]
   );
 }
 
@@ -320,7 +329,12 @@ function DayGroupTable({
                   <td
                     key={cell.id}
                     className="px-2 py-0.5 align-middle"
-                    style={{ width: cell.column.getSize() }}
+                    // height:1px is the classic table trick: a td treats height
+                    // as a minimum and stretches to the row's natural height
+                    // (driven by the tall Title/Notes cells), so a child's
+                    // `h-full` resolves to the FULL row height — making the
+                    // whole cell a click target, not just the centered value.
+                    style={{ width: cell.column.getSize(), height: 1 }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
@@ -347,12 +361,17 @@ export function ItineraryTable({
   onItemSelect,
   dayWarnings,
   drives,
+  onLocationEdited,
 }: {
   tripId: string;
   selectedItemId: string | null;
   onItemSelect: (itemId: string) => void;
   dayWarnings?: DayWarning[];
   drives?: { itemId: string; durationSeconds: number }[];
+  // Fired when a location field is committed as PLAIN TEXT (no place picked) so
+  // the parent can fall back to fuzzy geocoding (S7-5). A picked place already
+  // carries exact coords and does NOT fire this.
+  onLocationEdited?: (itemId: string) => void;
 }) {
   const { data: items, isLoading } = useItineraryItems(tripId);
   const createItem = useCreateItem(tripId);
@@ -405,9 +424,11 @@ export function ItineraryTable({
   // event handlers, which run after commit — so they're always current.
   const updateRef = useRef(updateItem);
   const deleteRef = useRef(deleteItem);
+  const locationEditedRef = useRef(onLocationEdited);
   useEffect(() => {
     updateRef.current = updateItem;
     deleteRef.current = deleteItem;
+    locationEditedRef.current = onLocationEdited;
   });
 
   const handleUpdate = useCallback(
@@ -420,6 +441,31 @@ export function ItineraryTable({
   const handleDelete = useCallback((itemId: string) => {
     deleteRef.current.mutate(itemId);
   }, []);
+
+  // A place picked from the type-ahead: write name + exact coords together, all
+  // user_provided (a deliberate human choice — protects the coords from fuzzy
+  // re-geocoding, the whole point of picking). One PATCH so the cache updates
+  // atomically.
+  const handlePickLocation = useCallback(
+    (itemId: string, kind: LocationKind, name: string, lat: number, lng: number) => {
+      const data =
+        kind === "origin"
+          ? { originName: name, originLat: lat, originLng: lng }
+          : { destinationName: name, destinationLat: lat, destinationLng: lng };
+      updateRef.current.mutate({ itemId, data });
+    },
+    []
+  );
+
+  // A location committed as plain text (no pick): save the name, then let the
+  // parent fall back to fuzzy geocoding for fresh coords (S7-5).
+  const handleTextLocation = useCallback(
+    (itemId: string, field: string, value: string | null) => {
+      updateRef.current.mutate({ itemId, data: { [field]: value } });
+      if (value) locationEditedRef.current?.(itemId);
+    },
+    []
+  );
 
   function handleAddItem(date: string | null) {
     const maxSort = (items ?? [])
@@ -445,7 +491,13 @@ export function ItineraryTable({
     setShowNewDay(false);
   }
 
-  const columns = useColumns(handleUpdate, handleDelete);
+  const columns = useColumns(
+    tripId,
+    handleUpdate,
+    handleDelete,
+    handlePickLocation,
+    handleTextLocation
+  );
   const groups = useMemo(() => groupByDate(items ?? []), [items]);
 
   if (isLoading) {

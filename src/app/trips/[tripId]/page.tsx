@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useMemo, useEffect, useCallback, lazy, Suspense, type ReactNode } from "react";
+import { use, useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTrip, useUpdateTrip, useDeleteTrip } from "@/lib/hooks/use-trips";
@@ -15,6 +15,7 @@ import { TasksPanel } from "./tasks-panel";
 import { ChecklistPanel } from "./checklist-panel";
 import { PackingPanel } from "./packing-panel";
 import { usePacking } from "@/lib/hooks/use-packing";
+import { autoDriveDuration } from "@/lib/trip-state/drive-duration";
 
 const TripMap = lazy(() =>
   import("./trip-map").then((mod) => ({ default: mod.TripMap }))
@@ -106,25 +107,22 @@ export default function TripPage({
     return () => clearTimeout(t);
   }, []);
 
-  // Auto-fill blank drive durations from the REAL routed time (geography
-  // keystone — never invented). Only fills BLANKS so a planned duration set by
-  // the user/AI still wins (the sequencer's durationOf lesson). Stamped
-  // historical_estimate (an open field → clears the PATCH guard).
+  // Keep drive durations synced to the REAL routed time (geography keystone —
+  // never invented). Fills blanks AND refreshes a previously auto-derived
+  // (historical_estimate) duration when the route changes — e.g. correcting a
+  // mis-geocoded location re-routes the drive, so the stale duration must
+  // follow. A user/AI PLANNED duration is left untouched. See autoDriveDuration.
   useEffect(() => {
     if (!items || !routes?.drives?.length) return;
     const driveSecs = new Map(
       routes.drives.map((d) => [d.itemId, d.durationSeconds])
     );
     for (const it of items) {
-      if (it.category !== "drive" || it.durationMinutes != null) continue;
-      const sec = driveSecs.get(it.id);
-      if (!sec || sec <= 0) continue;
+      const next = autoDriveDuration(it, driveSecs.get(it.id));
+      if (next == null) continue;
       updateItem.mutate({
         itemId: it.id,
-        data: {
-          durationMinutes: Math.round(sec / 60),
-          _provenance: "historical_estimate",
-        },
+        data: { durationMinutes: next, _provenance: "historical_estimate" },
       });
     }
   }, [items, routes, updateItem]);
@@ -146,6 +144,34 @@ export default function TripPage({
       ).length,
     [items]
   );
+
+  // S7-5: when a location is typed (not picked from the dropdown), the coords go
+  // stale. Debounce a single-item force re-geocode so the map catches up without
+  // the user hitting "Re-map all". Picks already carry exact coords and skip
+  // this. force=true is needed because the item already has (now stale) coords;
+  // user_provided coords stay sacred (the geocode route never touches them) —
+  // which is also why a picked location won't be clobbered here.
+  const geocodeMutateRef = useRef(geocode.mutate);
+  useEffect(() => {
+    geocodeMutateRef.current = geocode.mutate;
+  });
+  const geocodeTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const handleLocationEdited = useCallback((itemId: string) => {
+    const timers = geocodeTimers.current;
+    const existing = timers.get(itemId);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      itemId,
+      setTimeout(() => {
+        timers.delete(itemId);
+        geocodeMutateRef.current({ itemIds: [itemId], force: true });
+      }, 700)
+    );
+  }, []);
+  useEffect(() => {
+    const timers = geocodeTimers.current;
+    return () => timers.forEach(clearTimeout);
+  }, []);
 
   const handleItemSelect = useCallback((itemId: string) => {
     setSelectedItemId((prev) => (prev === itemId ? null : itemId));
@@ -290,6 +316,7 @@ export default function TripPage({
             onItemSelect={handleItemSelect}
             dayWarnings={dayWarnings}
             drives={routes?.drives}
+            onLocationEdited={handleLocationEdited}
           />
         </div>
 

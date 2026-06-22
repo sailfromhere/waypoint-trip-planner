@@ -20,7 +20,19 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
+    // Chromium runs the whole suite.
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // WebKit runs ONLY the cross-browser spec — native form controls
+    // (<input type="time"/"date">) behave very differently in Safari/WebKit
+    // (a controlled time input is wiped mid-entry there), and most users are
+    // not on Chrome. Scoped to one file so we get Safari coverage on the
+    // brittle bits without doubling the whole suite's cost. Needs the WebKit
+    // browser installed: `npx playwright install webkit`.
+    {
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+      testMatch: /cross-browser\.spec\.ts/,
+    },
   ],
   webServer: {
     command: "npm run dev",

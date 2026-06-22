@@ -88,8 +88,17 @@ export function EditableCell({
   }
 
   function commit() {
+    // Read the LIVE DOM value, not `draft`. Single-line inputs are uncontrolled
+    // (defaultValue) because a controlled <input type="time"/"date"> is rejected
+    // mid-entry by WebKit/Safari (it only fires onChange on a *complete* value,
+    // so the controlled empty value keeps wiping partial entry → the time
+    // "goes away"). The DOM value is authoritative across browsers.
+    const live =
+      inputRef.current && !(inputRef.current instanceof HTMLSelectElement)
+        ? inputRef.current.value
+        : draft;
     setEditing(false);
-    const trimmed = draft.trim();
+    const trimmed = live.trim();
 
     if (trimmed === currentString()) return;
 
@@ -164,9 +173,11 @@ export function EditableCell({
           e.stopPropagation();
           startEditing();
         }}
-        className={`w-full cursor-text text-xs py-1 px-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 min-h-[1.5rem] ${
+        // h-full makes the whole (tall) cell clickable, not just a thin strip;
+        // single-line cells center their value, multi-line wrap from the top.
+        className={`w-full cursor-text text-xs py-1 px-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 h-full min-h-[1.5rem] ${
           !display ? "text-zinc-400" : ""
-        } ${multiline ? "whitespace-pre-wrap break-words" : ""} ${className}`}
+        } ${multiline ? "whitespace-pre-wrap break-words" : "flex items-center"} ${className}`}
       >
         {display || placeholder}
       </div>
@@ -196,7 +207,12 @@ export function EditableCell({
     <input
       ref={inputRef as React.RefObject<HTMLInputElement>}
       type={inputType}
-      value={draft}
+      // UNCONTROLLED (defaultValue, not value): a controlled time/date input is
+      // wiped mid-entry by Safari/WebKit. The native control owns the value
+      // during editing; commit() reads it from the DOM. The read→edit toggle
+      // remounts a fresh input each session, so defaultValue is always current
+      // (and a background refetch can't remount-and-wipe an in-progress edit).
+      defaultValue={draft}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}

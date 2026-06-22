@@ -113,6 +113,13 @@ test.describe("fieldLockLevel — classification", () => {
     expect(fieldLockLevel("notes", it)).toBe("open");
   });
 
+  test("an EMPTY user_provided field is OPEN (nothing to protect — fillable)", () => {
+    // Field cleared but provenance left stale (older code) → must be fillable
+    // so auto-schedule can write a start time the user previously deleted.
+    const it = item({ startTime: null, fieldProvenance: { startTime: "user_provided" } });
+    expect(fieldLockLevel("startTime", it)).toBe("open");
+  });
+
   test("delete: booked = hard, user-data = confirm, ai-only = open", () => {
     expect(deleteLockLevel(item({ confirmationStatus: "booked" }))).toBe("hard");
     expect(deleteLockLevel(item({ fieldProvenance: { title: "user_provided" } }))).toBe("confirm");
@@ -134,6 +141,11 @@ test.describe("guardHumanData / guardDelete — strict PATCH guard (no confirm U
   test("allows AI overwriting its own ai_assumption field", () => {
     const existing = item({ fieldProvenance: { notes: "ai_assumption" } });
     expect(guardHumanData(existing, { notes: "better notes" }, "ai_assumption")).toEqual([]);
+  });
+
+  test("allows auto-schedule to fill a cleared start time carrying a stale user_provided stamp", () => {
+    const existing = item({ startTime: null, fieldProvenance: { startTime: "user_provided" } });
+    expect(guardHumanData(existing, { startTime: "09:00" }, "historical_estimate")).toEqual([]);
   });
 
   test("always allows direct user edits", () => {

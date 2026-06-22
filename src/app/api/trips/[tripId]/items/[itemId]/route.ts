@@ -40,12 +40,19 @@ export async function PATCH(
     }
   }
 
-  // Merge provenance: update only the fields being changed
+  // Merge provenance: update only the fields being changed. CLEARING a field
+  // (null/empty) drops its provenance — an empty field holds no human data to
+  // protect, so a later AI/auto write (e.g. auto-schedule) isn't blocked by a
+  // stale `user_provided` stamp left behind on a value the user deleted.
   const mergedProvenance: FieldProvenance = {
     ...(existing.fieldProvenance as FieldProvenance),
   };
   for (const key of Object.keys(body)) {
-    if (key !== "fieldProvenance") {
+    if (key === "fieldProvenance") continue;
+    const val = body[key];
+    if (val === null || val === "") {
+      delete mergedProvenance[key as keyof FieldProvenance];
+    } else {
       mergedProvenance[key] = source;
     }
   }

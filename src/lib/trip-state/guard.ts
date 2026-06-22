@@ -44,8 +44,16 @@ export function fieldLockLevel(
     // Hard facts are locked; soft labels (title/notes/category/etc.) → confirm.
     return HARD_BOOKED_FIELDS.has(field as TrackableField) ? "hard" : "confirm";
   }
-  // Non-booked: the human's own fields need confirmation; the rest are open.
-  return prov[field as TrackableField] === "user_provided" ? "confirm" : "open";
+  // Non-booked: the human's own fields need confirmation — UNLESS the field is
+  // currently EMPTY. An empty field holds no human data to protect, so it's
+  // freely fillable (e.g. auto-schedule writing a blank startTime). This also
+  // recovers items left with a stale `user_provided` stamp on a value the user
+  // cleared under older code (before clearing dropped the provenance).
+  if (prov[field as TrackableField] === "user_provided") {
+    const v = (item as Record<string, unknown>)[field];
+    return v == null || v === "" ? "open" : "confirm";
+  }
+  return "open";
 }
 
 export function fieldLockReason(field: string, level: LockLevel): string {

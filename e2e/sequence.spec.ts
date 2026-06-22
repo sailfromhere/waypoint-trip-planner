@@ -50,13 +50,61 @@ test("fills blanks from a default 9am start, accumulating durations", () => {
 });
 
 test("anchors on an existing user start time without emitting a change for it", () => {
-  const a = item({ sortOrder: 0, durationMinutes: 60, startTime: "13:00:00" });
+  // user_provided provenance is what makes it an anchor (a prior auto-fill is not).
+  const a = item({
+    sortOrder: 0,
+    durationMinutes: 60,
+    startTime: "13:00:00",
+    fieldProvenance: { startTime: "user_provided" },
+  });
   const b = item({ sortOrder: 1, durationMinutes: 30 });
   const changes = sequenceDay([a, b]);
 
   // a is an anchor → not in the changes; b is filled starting at 14:00.
   expect(changes.map((c) => c.itemId)).toEqual([b.id]);
   expect(changes[0]).toMatchObject({ startTime: "14:00", endTime: "14:30" });
+});
+
+test("a prior auto-fill (historical_estimate) is NOT an anchor — it re-flows when a user anchor changes", () => {
+  // Regression (field bug): after one auto-schedule every item has a time; if the
+  // user then changes the first (user) time, re-running must recompute the rest
+  // (which carry historical_estimate fills), not treat them as fixed anchors.
+  const a = item({
+    sortOrder: 0,
+    durationMinutes: 60,
+    startTime: "08:00:00",
+    fieldProvenance: { startTime: "user_provided" },
+  });
+  const b = item({
+    sortOrder: 1,
+    durationMinutes: 30,
+    startTime: "15:00:00", // stale prior fill
+    fieldProvenance: { startTime: "historical_estimate" },
+  });
+  const changes = sequenceDay([a, b]);
+
+  // a (user) anchored at 08:00 → no change; b recomputed to 09:00, overwriting 15:00.
+  expect(changes.map((c) => c.itemId)).toEqual([b.id]);
+  expect(changes[0]).toMatchObject({ startTime: "09:00", endTime: "09:30" });
+});
+
+test("re-running on an already-sequenced day (no anchor change) emits no changes", () => {
+  const a = item({
+    sortOrder: 0,
+    durationMinutes: 60,
+    startTime: "09:00:00",
+    endTime: "10:00:00",
+    fieldProvenance: { startTime: "historical_estimate" },
+  });
+  const b = item({
+    sortOrder: 1,
+    durationMinutes: 30,
+    startTime: "10:00:00",
+    endTime: "10:30:00",
+    fieldProvenance: { startTime: "historical_estimate" },
+  });
+  // Both already sit in their computed slots (9am default) → idempotent no-op.
+  expect(sequenceDay([a, b])).toEqual([]);
 });
 
 test("never overwrites a booked item's time, but advances the cursor past it", () => {
@@ -97,7 +145,13 @@ test("a drive's PLANNED duration wins over its routed time (block must match the
   // Regression: a 60-min planned scenic drive whose raw routed time is only 16
   // min must advance the cursor by 60 (next item at +60), not 16 — otherwise the
   // calendar block (60) and the next start (12:21) disagree and look overlapped.
-  const drive = item({ sortOrder: 0, category: "drive", startTime: "12:05:00", durationMinutes: 60 });
+  const drive = item({
+    sortOrder: 0,
+    category: "drive",
+    startTime: "12:05:00",
+    durationMinutes: 60,
+    fieldProvenance: { startTime: "user_provided" },
+  });
   const next = item({ sortOrder: 1, durationMinutes: 30 });
   const driveSecs = new Map([[drive.id, 16 * 60]]); // routed = 16 min
 

@@ -1,5 +1,3 @@
-import type { LatLng } from "./types";
-
 export interface GeocodingResult {
   lat: number;
   lng: number;
@@ -13,8 +11,28 @@ export interface GeocodeOptions {
   proximity?: { lat: number; lng: number };
 }
 
+// One type-ahead candidate. `id` is what `retrieve()` resolves into coords —
+// for Mapbox Search Box it's the `mapbox_id` (suggest returns NO coords; you
+// must retrieve); for providers that return coords inline (Nominatim/mock) we
+// encode the coords in the id so retrieve is a cheap decode.
+export interface LocationSuggestion {
+  id: string;
+  name: string; // primary display name ("Old Faithful Inn")
+  context: string; // disambiguating context line ("Yellowstone National Park, WY")
+}
+
+export interface SuggestOptions extends GeocodeOptions {
+  // Mapbox Search Box groups a suggest→retrieve pair into one billing session
+  // via a client-generated token. Other providers ignore it.
+  sessionToken?: string;
+}
+
 export interface GeocodingProvider {
   geocode(query: string, options?: GeocodeOptions): Promise<GeocodingResult | null>;
+  // Type-ahead: return a short list of real-place candidates for `query`.
+  suggest(query: string, options?: SuggestOptions): Promise<LocationSuggestion[]>;
+  // Resolve a suggestion `id` (from `suggest`) into concrete coordinates.
+  retrieve(id: string, options?: SuggestOptions): Promise<GeocodingResult | null>;
 }
 
 /**
@@ -61,14 +79,36 @@ export function candidateQueries(raw: string): string[] {
   return out.slice(0, 4); // cap candidates → bounded API calls
 }
 
+// Deterministic pseudo-coords from a string — shared by mock geocode/retrieve so
+// the same name always maps to the same point.
+function mockCoords(s: string): { lat: number; lng: number } {
+  const hash = Array.from(s).reduce((h, c) => h * 31 + c.charCodeAt(0), 0);
+  return {
+    lat: 35 + (Math.abs(hash) % 1500) / 100,
+    lng: -120 + (Math.abs(hash >> 8) % 3000) / 100,
+  };
+}
+
 export class MockGeocodingProvider implements GeocodingProvider {
   async geocode(query: string): Promise<GeocodingResult | null> {
-    const hash = Array.from(query).reduce((h, c) => h * 31 + c.charCodeAt(0), 0);
-    return {
-      lat: 35 + (Math.abs(hash) % 1500) / 100,
-      lng: -120 + (Math.abs(hash >> 8) % 3000) / 100,
-      displayName: query,
-    };
+    return { ...mockCoords(query), displayName: query };
+  }
+
+  async suggest(query: string): Promise<LocationSuggestion[]> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    // A small deterministic candidate set so the picker UI + tests have
+    // something to choose from without a network call.
+    return ["", " Downtown", " National Park", " Lodge"].map((suffix, i) => ({
+      id: `mock:${q}${suffix}`,
+      name: `${q}${suffix}`.trim(),
+      context: i === 0 ? "Best match" : "Mock suggestion",
+    }));
+  }
+
+  async retrieve(id: string): Promise<GeocodingResult | null> {
+    const name = id.replace(/^mock:/, "");
+    return { ...mockCoords(name), displayName: name };
   }
 }
 
@@ -107,6 +147,41 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
       lng: parseFloat(data[0].lon),
       displayName: data[0].display_name,
     };
+  }
+
+  async suggest(query: string, options?: SuggestOptions): Promise<LocationSuggestion[]> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("q", q);
+    url.searchParams.set("format", "json");
+    url.searchParams.set("limit", "5");
+    url.searchParams.set("addressdetails", "0");
+    if (options?.proximity) {
+      const { lat, lng } = options.proximity;
+      const d = 1.5;
+      url.searchParams.set("viewbox", `${lng - d},${lat - d},${lng + d},${lat + d}`);
+    }
+    const res = await fetch(url.toString(), {
+      headers: { "User-Agent": "Waypoint-TripPlanner/0.1" },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { lat: string; lon: string; display_name: string }[];
+    return data.map((d) => {
+      const parts = d.display_name.split(",");
+      return {
+        // Nominatim returns coords inline — encode them so retrieve is a decode.
+        id: `nom:${parseFloat(d.lat)},${parseFloat(d.lon)}|${d.display_name}`,
+        name: parts[0].trim(),
+        context: parts.slice(1).join(",").trim(),
+      };
+    });
+  }
+
+  async retrieve(id: string): Promise<GeocodingResult | null> {
+    const m = /^nom:(-?[\d.]+),(-?[\d.]+)\|(.*)$/.exec(id);
+    if (!m) return null;
+    return { lat: parseFloat(m[1]), lng: parseFloat(m[2]), displayName: m[3] };
   }
 }
 
@@ -180,5 +255,53 @@ export class MapboxGeocodingProvider implements GeocodingProvider {
     }
     // Nearest near-the-trip match, else best-effort most-specific hit.
     return best ?? firstHit;
+  }
+
+  // Search Box type-ahead: /suggest returns candidates (no coords), then
+  // /retrieve resolves a chosen candidate's coords. Both share a session_token
+  // so Mapbox bills the pair as a single search session.
+  async suggest(query: string, options?: SuggestOptions): Promise<LocationSuggestion[]> {
+    if (!this.token) return [];
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const url = new URL("https://api.mapbox.com/search/searchbox/v1/suggest");
+    url.searchParams.set("q", q);
+    url.searchParams.set("access_token", this.token);
+    url.searchParams.set("session_token", options?.sessionToken ?? "waypoint");
+    url.searchParams.set("limit", "6");
+    if (options?.proximity) {
+      url.searchParams.set("proximity", `${options.proximity.lng},${options.proximity.lat}`);
+    }
+    const res = await fetch(url.toString());
+    if (!res.ok) return [];
+    const suggestions = (await res.json()).suggestions as
+      | { mapbox_id: string; name: string; place_formatted?: string; full_address?: string }[]
+      | undefined;
+    if (!suggestions) return [];
+    return suggestions.map((s) => ({
+      id: s.mapbox_id,
+      name: s.name,
+      context: s.place_formatted ?? s.full_address ?? "",
+    }));
+  }
+
+  async retrieve(id: string, options?: SuggestOptions): Promise<GeocodingResult | null> {
+    if (!this.token) return null;
+    const url = new URL(
+      `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(id)}`
+    );
+    url.searchParams.set("access_token", this.token);
+    url.searchParams.set("session_token", options?.sessionToken ?? "waypoint");
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+    const feature = (await res.json()).features?.[0];
+    const coords = feature?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return null;
+    const [lng, lat] = coords as [number, number];
+    return {
+      lat,
+      lng,
+      displayName: feature.properties?.full_address ?? feature.properties?.name ?? id,
+    };
   }
 }

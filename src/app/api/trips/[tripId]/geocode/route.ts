@@ -4,6 +4,7 @@ import { itineraryItems } from "@/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { geocoding } from "@/lib/integrations";
 import type { FieldProvenance } from "@/db/types";
+import { largestClusterCentroid, type Pt } from "@/lib/trip-state/anchor";
 
 interface GeocodedResult {
   id: string;
@@ -54,23 +55,6 @@ export async function POST(
   // when a big minority are wrong AND the wrong ones cluster (e.g. several stale
   // results all in Utah). Existing coords seed it; freshly-geocoded results are
   // folded in as we go, so a force re-map self-corrects.
-  type Pt = { lat: number; lng: number };
-  const CLUSTER_DEG = 1.0; // ~70mi: points this close count as the same region
-  const largestClusterCentroid = (pts: Pt[]): Pt | undefined => {
-    if (!pts.length) return undefined;
-    let best: Pt[] = [];
-    for (const p of pts) {
-      const near = pts.filter(
-        (q) => Math.hypot(q.lat - p.lat, q.lng - p.lng) <= CLUSTER_DEG
-      );
-      if (near.length > best.length) best = near;
-    }
-    return {
-      lat: best.reduce((s, c) => s + c.lat, 0) / best.length,
-      lng: best.reduce((s, c) => s + c.lng, 0) / best.length,
-    };
-  };
-
   const existingCoords: Pt[] = [];
   for (const it of allItems) {
     if (it.destinationLat != null && it.destinationLng != null)

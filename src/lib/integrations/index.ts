@@ -47,4 +47,9 @@ export const geocoding: GeocodingProvider = createGeocodingProvider();
 
 export type { RoutingProvider, WeatherProvider, LodgingProvider } from "./types";
 export type { LatLng, RouteResult, RouteLeg, DailyForecast, LodgingOption } from "./types";
-export type { GeocodingProvider, GeocodingResult } from "./geocoding";
+export type {
+  GeocodingProvider,
+  GeocodingResult,
+  LocationSuggestion,
+  SuggestOptions,
+} from "./geocoding";
