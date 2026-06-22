@@ -1,13 +1,42 @@
 "use client";
 
-import { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import {
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  type CSSProperties,
+} from "react";
 import {
   useReactTable,
   getCoreRowModel,
   flexRender,
   createColumnHelper,
   type ColumnDef,
+  type Row,
 } from "@tanstack/react-table";
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDroppable,
+  type DragStartEvent,
+  type DragOverEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { ItineraryItem } from "@/db/types";
 import {
   useItineraryItems,
@@ -15,6 +44,8 @@ import {
   useUpdateItem,
   useDeleteItem,
   useAutoSchedule,
+  useReorderItems,
+  type ReorderChange,
 } from "@/lib/hooks/use-itinerary";
 import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state/sequence";
 import { EditableCell } from "./editable-cell";
@@ -205,7 +236,10 @@ function groupByDate(items: ItineraryItem[]): DayGroup[] {
     result.push({
       date: key,
       label: formatDate(key),
-      items: groupItems,
+      // Sort by sortOrder in render so an optimistic drag-reorder (which only
+      // rewrites sortOrder in the cache, not the array position) shows the new
+      // order in the same frame, before the refetch settles.
+      items: [...groupItems].sort((a, b) => a.sortOrder - b.sortOrder),
     });
   }
   result.sort((a, b) => (a.date! < b.date! ? -1 : 1));
@@ -215,7 +249,7 @@ function groupByDate(items: ItineraryItem[]): DayGroup[] {
     result.push({
       date: null,
       label: "Unscheduled",
-      items: unscheduled,
+      items: [...unscheduled].sort((a, b) => a.sortOrder - b.sortOrder),
     });
   }
 
@@ -240,6 +274,144 @@ export interface DayWarning {
   warnings: string[];
 }
 
+const UNSCHEDULED_KEY = "__unscheduled__";
+
+// The bucket an item belongs to: its date, or the unscheduled sentinel. Used as
+// the SortableContext / droppable id namespace and to detect cross-day drops.
+function dayKeyOf(item: Pick<ItineraryItem, "date">): string {
+  return item.date ?? UNSCHEDULED_KEY;
+}
+
+function GripDots() {
+  return (
+    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
+      <circle cx="3" cy="3" r="1.3" />
+      <circle cx="7" cy="3" r="1.3" />
+      <circle cx="3" cy="8" r="1.3" />
+      <circle cx="7" cy="8" r="1.3" />
+      <circle cx="3" cy="13" r="1.3" />
+      <circle cx="7" cy="13" r="1.3" />
+    </svg>
+  );
+}
+
+// A draggable itinerary row. The WHOLE row is the drag handle (a leading grip
+// glyph just signals the affordance on hover). The active editors inside each
+// cell stop pointer-down propagation, so dragging to select text in a cell
+// won't start a row drag; everywhere else on the row begins one.
+function SortableRow({
+  row,
+  selected,
+  onSelect,
+}: {
+  row: Row<ItineraryItem>;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const item = row.original;
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.id });
+
+  // Distinguish a click (row-select) from a drag so the row doesn't select on
+  // the pointerup that ends a drag. A sub-threshold jitter still counts a click.
+  const downPosRef = useRef<{ x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    // Never transition the actively-dragged row's transform — only the other
+    // rows animate their shuffle (a transition on the active one lags the drag).
+    transition: isDragging ? undefined : transition,
+  };
+
+  // Compose dnd-kit's pointer handler with our click-vs-drag tracking; ours runs
+  // ALONGSIDE dnd's activation handler, never replacing it.
+  const ls = (listeners ?? {}) as Record<string, (e: never) => void>;
+  const { onPointerDown: dndPointerDown, ...otherListeners } = ls;
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      id={`item-${item.id}`}
+      {...attributes}
+      {...otherListeners}
+      onPointerDown={(e) => {
+        dndPointerDown?.(e as never);
+        downPosRef.current = { x: e.clientX, y: e.clientY };
+        draggedRef.current = false;
+      }}
+      onPointerMove={(e) => {
+        if (!downPosRef.current) return;
+        const dx = e.clientX - downPosRef.current.x;
+        const dy = e.clientY - downPosRef.current.y;
+        if (Math.hypot(dx, dy) > 6) draggedRef.current = true;
+      }}
+      onClick={() => {
+        if (draggedRef.current) return;
+        onSelect(item.id);
+      }}
+      className={`group/row border-b border-zinc-50 dark:border-zinc-800/50 last:border-0 cursor-grab active:cursor-grabbing transition-colors ${
+        isDragging ? "opacity-30" : ""
+      } ${
+        selected
+          ? "bg-blue-50 dark:bg-blue-900/20 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
+          : "hover:bg-zinc-50 dark:hover:bg-zinc-800/30"
+      }`}
+    >
+      {row.getVisibleCells().map((cell, i) => (
+        <td
+          key={cell.id}
+          className="px-2 py-0.5 align-middle relative"
+          // height:1px is the classic table trick: a td treats height as a
+          // minimum and stretches to the row's natural height, so a child's
+          // `h-full` resolves to the FULL row height — making the whole cell a
+          // click target, not just the centered value.
+          style={{ width: cell.column.getSize(), height: 1 }}
+        >
+          {/* Hover-revealed grip affordance on the first cell. Pointer-events
+              off so it never intercepts clicks into the title editor. */}
+          {i === 0 && (
+            <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 text-zinc-300 dark:text-zinc-600 opacity-0 group-hover/row:opacity-100 transition-opacity">
+              <GripDots />
+            </span>
+          )}
+          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+// Floating copy that tracks the pointer during a drag (no in-place ghost). A
+// compact card rather than a full <tr>, which can't render outside a <table>.
+function DragRowPreview({ item }: { item: ItineraryItem }) {
+  const time = item.startTime
+    ? /^(\d{1,2}):(\d{2})/.exec(String(item.startTime))
+    : null;
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-white dark:bg-zinc-800 shadow-lg ring-1 ring-black/10 px-3 py-2 text-sm cursor-grabbing">
+      <span className="text-zinc-300 dark:text-zinc-600">
+        <GripDots />
+      </span>
+      <span className="font-medium text-zinc-700 dark:text-zinc-200 truncate max-w-[260px]">
+        {item.title || "Untitled"}
+      </span>
+      {time && (
+        <span className="text-xs text-zinc-400">
+          {time[1].padStart(2, "0")}:{time[2]}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function DayGroupTable({
   group,
   columns,
@@ -248,6 +420,7 @@ function DayGroupTable({
   selectedItemId,
   onItemSelect,
   warning,
+  isCrossDayTarget,
 }: {
   group: DayGroup;
   columns: ColumnDef<ItineraryItem, unknown>[];
@@ -256,12 +429,25 @@ function DayGroupTable({
   selectedItemId: string | null;
   onItemSelect: (itemId: string) => void;
   warning?: DayWarning;
+  // True while a row from ANOTHER day is hovering this day during a drag — used
+  // to highlight the drop target (within-day shuffles show via row transforms).
+  isCrossDayTarget?: boolean;
 }) {
+  const dayKey = group.date ?? UNSCHEDULED_KEY;
   const table = useReactTable({
     data: group.items,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    // Stable per-item row ids so dnd identifies rows by item id (not array
+    // index) and React moves the right DOM node when the order changes.
+    getRowId: (row) => row.id,
   });
+  // Drop target at the END of the day (the "+ Add item" footer) — lets a
+  // cross-day drop append after the last row, which row targets can't express.
+  const { setNodeRef: setEndRef, isOver: isEndOver } = useDroppable({
+    id: `end:${dayKey}`,
+  });
+  const itemIds = useMemo(() => group.items.map((i) => i.id), [group.items]);
 
   return (
     <div className="mb-6">
@@ -288,7 +474,13 @@ function DayGroupTable({
         )}
       </div>
 
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+      <div
+        className={`rounded-lg border bg-white dark:bg-zinc-900 overflow-hidden transition-colors ${
+          isCrossDayTarget
+            ? "border-blue-400 dark:border-blue-500 ring-1 ring-blue-300 dark:ring-blue-700"
+            : "border-zinc-200 dark:border-zinc-800"
+        }`}
+      >
         <table className="w-full border-collapse">
           <thead>
             {table.getHeaderGroups().map((hg) => (
@@ -314,43 +506,35 @@ function DayGroupTable({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr
-                key={row.id}
-                id={`item-${row.original.id}`}
-                onClick={() => onItemSelect(row.original.id)}
-                className={`group/row border-b border-zinc-50 dark:border-zinc-800/50 last:border-0 cursor-pointer transition-colors ${
-                  selectedItemId === row.original.id
-                    ? "bg-blue-50 dark:bg-blue-900/20 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
-                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/30"
-                }`}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="px-2 py-0.5 align-middle"
-                    // height:1px is the classic table trick: a td treats height
-                    // as a minimum and stretches to the row's natural height
-                    // (driven by the tall Title/Notes cells), so a child's
-                    // `h-full` resolves to the FULL row height — making the
-                    // whole cell a click target, not just the centered value.
-                    style={{ width: cell.column.getSize(), height: 1 }}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            <SortableContext
+              items={itemIds}
+              strategy={verticalListSortingStrategy}
+            >
+              {table.getRowModel().rows.map((row) => (
+                <SortableRow
+                  key={row.id}
+                  row={row}
+                  selected={selectedItemId === row.original.id}
+                  onSelect={onItemSelect}
+                />
+              ))}
+            </SortableContext>
           </tbody>
         </table>
       </div>
 
-      <button
-        onClick={() => onAddItem(group.date)}
-        className="mt-1.5 text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors px-2 py-1"
-      >
-        + Add item
-      </button>
+      <div ref={setEndRef}>
+        <button
+          onClick={() => onAddItem(group.date)}
+          className={`mt-1.5 text-xs transition-colors px-2 py-1 rounded ${
+            isEndOver
+              ? "text-blue-600 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-300 dark:ring-blue-700"
+              : "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+          }`}
+        >
+          {isEndOver ? "↳ Drop to add to end of day" : "+ Add item"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -378,8 +562,13 @@ export function ItineraryTable({
   const updateItem = useUpdateItem(tripId);
   const deleteItem = useDeleteItem(tripId);
   const autoSchedule = useAutoSchedule(tripId);
+  const reorderItems = useReorderItems(tripId);
   const [newDateInput, setNewDateInput] = useState("");
   const [showNewDay, setShowNewDay] = useState(false);
+  // Drag state: the item being dragged and which day the pointer is currently
+  // over (for the cross-day drop highlight).
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [overDayKey, setOverDayKey] = useState<string | null>(null);
   // Undo affordance for the deterministic fill (good-automatic + easy-manual).
   const [lastApplied, setLastApplied] = useState<ScheduleChange[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -387,6 +576,110 @@ export function ItineraryTable({
   const driveSecondsById = useMemo(
     () => new Map((drives ?? []).map((d) => [d.itemId, d.durationSeconds])),
     [drives]
+  );
+
+  const itemsById = useMemo(
+    () => new Map((items ?? []).map((i) => [i.id, i])),
+    [items]
+  );
+
+  const sensors = useSensors(
+    // 6px travel before a drag activates, so a plain click into a cell still
+    // edits and doesn't get hijacked into a drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const activeItem = activeId ? itemsById.get(activeId) ?? null : null;
+  const activeSourceKey = activeItem ? dayKeyOf(activeItem) : null;
+
+  // Resolve a drop target (`over`) to its day-key. `over` is either a row id or
+  // an `end:<dayKey>` footer droppable.
+  const resolveOverDayKey = useCallback(
+    (overId: string | null): string | null => {
+      if (!overId) return null;
+      if (overId.startsWith("end:")) return overId.slice(4);
+      const it = itemsById.get(overId);
+      return it ? dayKeyOf(it) : null;
+    },
+    [itemsById]
+  );
+
+  const handleDragStart = useCallback((e: DragStartEvent) => {
+    setActiveId(String(e.active.id));
+  }, []);
+
+  const handleDragOver = useCallback(
+    (e: DragOverEvent) => {
+      setOverDayKey(resolveOverDayKey(e.over ? String(e.over.id) : null));
+    },
+    [resolveOverDayKey]
+  );
+
+  const handleDragEnd = useCallback(
+    (e: DragEndEvent) => {
+      const active = activeId;
+      setActiveId(null);
+      setOverDayKey(null);
+      const overId = e.over ? String(e.over.id) : null;
+      if (!active || !overId) return;
+
+      const dragged = itemsById.get(active);
+      if (!dragged) return;
+      if (overId === active) return; // dropped on itself
+
+      const all = items ?? [];
+      const targetKey = resolveOverDayKey(overId);
+      if (targetKey == null) return;
+      const sourceKey = dayKeyOf(dragged);
+      const newDate = targetKey === UNSCHEDULED_KEY ? null : targetKey;
+
+      let ordered: ItineraryItem[];
+      if (sourceKey === targetKey) {
+        // Within-day: arrayMove on the day's sorted list.
+        const list = all
+          .filter((i) => dayKeyOf(i) === targetKey)
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        const oldIndex = list.findIndex((i) => i.id === active);
+        const overIsEnd = overId.startsWith("end:");
+        const newIndex = overIsEnd
+          ? list.length - 1
+          : list.findIndex((i) => i.id === overId);
+        if (oldIndex < 0 || newIndex < 0) return;
+        ordered = arrayMove(list, oldIndex, newIndex);
+      } else {
+        // Cross-day: insert the dragged item into the target day at the
+        // hovered row's slot (or append for the end droppable).
+        const list = all
+          .filter((i) => dayKeyOf(i) === targetKey)
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        const overIsEnd = overId.startsWith("end:");
+        const insertAt = overIsEnd
+          ? list.length
+          : Math.max(0, list.findIndex((i) => i.id === overId));
+        ordered = [...list.slice(0, insertAt), dragged, ...list.slice(insertAt)];
+      }
+
+      // Minimal change set: only items whose sortOrder actually shifts, plus the
+      // dragged item's date when it crossed days. Skipping no-ops avoids both
+      // wasted PATCHes and re-stamping unrelated items' date provenance.
+      const changes: ReorderChange[] = [];
+      ordered.forEach((it, i) => {
+        const dateChanged =
+          it.id === active && (it.date ?? null) !== newDate;
+        const sortChanged = it.sortOrder !== i;
+        if (!dateChanged && !sortChanged) return;
+        changes.push({
+          itemId: it.id,
+          sortOrder: i,
+          ...(dateChanged ? { date: newDate } : {}),
+        });
+      });
+      if (changes.length > 0) reorderItems.mutate(changes);
+    },
+    [activeId, items, itemsById, resolveOverDayKey, reorderItems]
   );
 
   const applySchedule = useCallback(
@@ -544,20 +837,47 @@ export function ItineraryTable({
           <p className="mb-4">No items yet. Add your first day to get started.</p>
         </div>
       ) : (
-        groups.map((group) => (
-          <DayGroupTable
-            key={group.date ?? "__unscheduled__"}
-            group={group}
-            columns={columns}
-            onAddItem={handleAddItem}
-            onAutoSchedule={() =>
-              applySchedule(sequenceDay(group.items, driveSecondsById))
-            }
-            selectedItemId={selectedItemId}
-            onItemSelect={onItemSelect}
-            warning={group.date ? dayWarnings?.find((w) => w.date === group.date) : undefined}
-          />
-        ))
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => {
+            setActiveId(null);
+            setOverDayKey(null);
+          }}
+        >
+          {groups.map((group) => {
+            const key = group.date ?? UNSCHEDULED_KEY;
+            return (
+              <DayGroupTable
+                key={key}
+                group={group}
+                columns={columns}
+                onAddItem={handleAddItem}
+                onAutoSchedule={() =>
+                  applySchedule(sequenceDay(group.items, driveSecondsById))
+                }
+                selectedItemId={selectedItemId}
+                onItemSelect={onItemSelect}
+                warning={
+                  group.date
+                    ? dayWarnings?.find((w) => w.date === group.date)
+                    : undefined
+                }
+                // Highlight only when a row from a DIFFERENT day hovers here.
+                isCrossDayTarget={
+                  overDayKey === key && activeSourceKey !== key
+                }
+              />
+            );
+          })}
+
+          <DragOverlay dropAnimation={null}>
+            {activeItem ? <DragRowPreview item={activeItem} /> : null}
+          </DragOverlay>
+        </DndContext>
       )}
 
       <div className="flex gap-2 mt-2">

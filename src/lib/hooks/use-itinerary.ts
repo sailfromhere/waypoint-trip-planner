@@ -168,6 +168,75 @@ export function useAutoSchedule(tripId: string) {
   });
 }
 
+// A drag-reorder change. `sortOrder` is always rewritten; `date` is present
+// ONLY for the dragged item when it crosses into another day (or to/from
+// Unscheduled, where `date` is null). Both go out as a plain user_provided
+// PATCH — a deliberate human placement — so the guard lets them through even
+// for booked items (moving your own booking is a human action).
+export interface ReorderChange {
+  itemId: string;
+  sortOrder: number;
+  date?: string | null;
+}
+
+// One-shot itinerary reorder: optimistically rewrites every affected item's
+// sortOrder (and the dragged item's date) in a single synchronous cache write
+// — so the new order shows in the same frame dnd-kit ends the drag — then
+// persists each change and invalidates once. Mirrors useReorderTasks; a
+// deferred write (behind an awaited cancelQueries) would flash.
+export function useReorderItems(tripId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (changes: ReorderChange[]) => {
+      await Promise.all(
+        changes.map((c) =>
+          fetch(`/api/trips/${tripId}/items/${c.itemId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sortOrder: c.sortOrder,
+              ...(c.date !== undefined ? { date: c.date } : {}),
+            }),
+          }).then((res) => {
+            if (!res.ok) throw new Error("Failed to reorder item");
+          })
+        )
+      );
+    },
+    onMutate: (changes) => {
+      // Synchronous cache write (before any await) so the new order renders in
+      // the same frame the drag ends — a deferred write causes a visible flash.
+      const prev = qc.getQueryData<ItineraryItem[]>(["trips", tripId, "items"]);
+      if (prev) {
+        const byId = new Map(changes.map((c) => [c.itemId, c]));
+        qc.setQueryData<ItineraryItem[]>(
+          ["trips", tripId, "items"],
+          prev.map((item) => {
+            const c = byId.get(item.id);
+            if (!c) return item;
+            return {
+              ...item,
+              sortOrder: c.sortOrder,
+              ...(c.date !== undefined ? { date: c.date } : {}),
+            };
+          })
+        );
+      }
+      qc.cancelQueries({ queryKey: ["trips", tripId, "items"] });
+      return { prev };
+    },
+    onError: (_err, _changes, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["trips", tripId, "items"], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["trips", tripId, "items"] });
+      // Reordering changes drive adjacency (and a cross-day move re-groups
+      // drives by date), so always re-route.
+      qc.invalidateQueries({ queryKey: ["trips", tripId, "routes"] });
+    },
+  });
+}
+
 export function useDeleteItem(tripId: string) {
   const qc = useQueryClient();
   return useMutation({

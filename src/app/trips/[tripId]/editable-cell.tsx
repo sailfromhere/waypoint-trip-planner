@@ -147,6 +147,7 @@ export function EditableCell({
         ref={inputRef as React.RefObject<HTMLSelectElement>}
         value={String(value ?? "")}
         onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => {
           onSave(e.target.value);
         }}
@@ -190,6 +191,7 @@ export function EditableCell({
         ref={inputRef as React.RefObject<HTMLTextAreaElement>}
         value={draft}
         onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={handleKeyDown}
@@ -207,6 +209,7 @@ export function EditableCell({
     <input
       ref={inputRef as React.RefObject<HTMLInputElement>}
       type={inputType}
+      onPointerDown={(e) => e.stopPropagation()}
       // UNCONTROLLED (defaultValue, not value): a controlled time/date input is
       // wiped mid-entry by Safari/WebKit. The native control owns the value
       // during editing; commit() reads it from the DOM. The read→edit toggle

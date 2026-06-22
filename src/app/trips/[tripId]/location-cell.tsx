@@ -233,6 +233,7 @@ export function LocationCell({
         value={draft}
         autoFocus
         onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={() => {
