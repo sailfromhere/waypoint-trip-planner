@@ -17,6 +17,7 @@ import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import type { ItineraryItem } from "@/db/types";
 import { useUpdateItem } from "@/lib/hooks/use-itinerary";
 import { DAY_COLORS, buildDayColorMap } from "@/lib/trip-state/day-colors";
+import { isUntitled, UNTITLED_LABEL } from "@/lib/format";
 
 // ── Local date/time helpers ──────────────────────────────────────────────────
 // FullCalendar works in the browser's local time. Build event strings WITHOUT a
@@ -214,6 +215,16 @@ export function CalendarView({
 // `round(minutes / 30)` lines (a 30-min block = 1 line, 60 = 2, …). Clamping by
 // LINE COUNT (not pixel height) means a too-long title ellipsizes on its last
 // allowed line — we never show a half-cut line. <30-min blocks show title only.
+// An empty title renders as a muted italic "Untitled" placeholder (matching the
+// table + map), so an unnamed block is still legible instead of a blank event.
+function eventTitleNode(title: string) {
+  return isUntitled(title) ? (
+    <span style={{ fontStyle: "italic", opacity: 0.55 }}>{UNTITLED_LABEL}</span>
+  ) : (
+    <>{title}</>
+  );
+}
+
 function renderEventContent(arg: EventContentArg) {
   const { event, timeText, view } = arg;
   const color = (event.extendedProps.color as string) || "#6b7280";
@@ -223,13 +234,13 @@ function renderEventContent(arg: EventContentArg) {
     return (
       <div className="wp-evm">
         <span className="wp-evm-bar" style={{ backgroundColor: color }} />
-        <span className="wp-evm-title">{event.title}</span>
+        <span className="wp-evm-title">{eventTitleNode(event.title)}</span>
         {timeText && <span className="wp-evm-time">{timeText}</span>}
       </div>
     );
   }
   if (event.allDay) {
-    return <div className="wp-ev-allday">{event.title}</div>;
+    return <div className="wp-ev-allday">{eventTitleNode(event.title)}</div>;
   }
   const start = event.start?.getTime();
   const end = event.end?.getTime();
@@ -244,7 +255,7 @@ function renderEventContent(arg: EventContentArg) {
       className={short ? "wp-ev" : "wp-ev wp-ev-timed"}
       style={{ "--wp-lines": lines } as CSSProperties}
     >
-      {event.title}
+      {eventTitleNode(event.title)}
     </div>
   );
 }

@@ -41,7 +41,8 @@ test("start time entry commits and persists (uncontrolled time input)", async ({
   const row = page.locator("tr", { hasText: "Tour" }).first();
   await expect(row).toBeVisible();
 
-  const startCell = row.locator("td").nth(2);
+  // Cells: actions ✕, title, category, start, … → Start is nth(3).
+  const startCell = row.locator("td").nth(3);
   await startCell.getByText("—").click();
   const timeInput = row.locator('input[type="time"]');
   await expect(timeInput).toBeVisible();
@@ -62,6 +63,6 @@ test("start time entry commits and persists (uncontrolled time input)", async ({
   // …and a reload (persisted to the DB).
   await page.reload();
   await expect(
-    page.locator("tr", { hasText: "Tour" }).first().locator("td").nth(2)
+    page.locator("tr", { hasText: "Tour" }).first().locator("td").nth(3)
   ).toHaveText("14:30");
 });

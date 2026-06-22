@@ -202,7 +202,7 @@ function useColumns(
         }),
         col.display({
           id: "actions",
-          size: 40,
+          size: 22,
           enableResizing: false,
           cell: ({ row }) => (
             <button
@@ -359,7 +359,13 @@ function SortableRow({
       {row.getVisibleCells().map((cell) => (
         <td
           key={cell.id}
-          className="px-2 py-0.5 align-middle relative"
+          className={`${
+            cell.column.id === "actions"
+              ? "px-0 text-center"
+              : cell.column.id === "title"
+              ? "pl-0 pr-2"
+              : "px-2"
+          } py-0.5 align-middle relative`}
           // height:1px is the classic table trick: a td treats height as a
           // minimum and stretches to the row's natural height, so a child's
           // `h-full` resolves to the FULL row height — making the whole cell a
@@ -412,7 +418,13 @@ function DragRowPreview({
           {row.getVisibleCells().map((cell) => (
             <td
               key={cell.id}
-              className="px-2 py-0.5 align-middle"
+              className={`${
+                cell.column.id === "actions"
+                  ? "px-0 text-center"
+                  : cell.column.id === "title"
+                  ? "pl-0 pr-2"
+                  : "px-2"
+              } py-0.5 align-middle`}
               style={{ width: cell.column.getSize(), height: 1 }}
             >
               {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -604,7 +616,7 @@ function DayGroupTable({
   group: DayGroup;
   columns: ColumnDef<ItineraryItem, unknown>[];
   // Shared across every day-table so all groups show the same columns in the
-  // same order ("actions" is appended last by the parent).
+  // same order ("actions" is pinned first/leftmost by the parent).
   columnOrder: string[];
   columnVisibility: Record<string, boolean>;
   columnSizing: ColumnSizingState;
@@ -989,9 +1001,11 @@ export function ItineraryTable({
     [headerOverId, onHeaderDragStart, onHeaderDragOver, onHeaderDragEnd, onHeaderDrop]
   );
 
-  // TanStack wants the full leaf-id order including the pinned "actions" control.
+  // TanStack wants the full leaf-id order including the pinned "actions"
+  // control. It's pinned FIRST (leftmost) so the delete ✕ is reachable without
+  // scrolling the now-wide table all the way right.
   const tableColumnOrder = useMemo(
-    () => [...columnOrder, "actions"],
+    () => ["actions", ...columnOrder],
     [columnOrder]
   );
 
@@ -1192,7 +1206,8 @@ export function ItineraryTable({
       .reduce((max, i) => Math.max(max, i.sortOrder), -1);
 
     createItem.mutate({
-      title: "New item",
+      title: "",
+      category: "activity",
       date,
       sortOrder: maxSort + 1,
     });
@@ -1202,7 +1217,8 @@ export function ItineraryTable({
     e.preventDefault();
     if (!newDateInput) return;
     createItem.mutate({
-      title: "New item",
+      title: "",
+      category: "activity",
       date: newDateInput,
       sortOrder: 0,
     });

@@ -60,8 +60,8 @@ test("picking a suggestion stores the name + exact coordinates", async ({ page }
   const row = page.locator("tr", { hasText: "Visit" }).first();
   await expect(row).toBeVisible();
 
-  // Location is the 5th column (title, category, start, duration, location, …).
-  const locationCell = row.locator("td").nth(4);
+  // Cells: actions ✕, title, category, start, duration, location, … → nth(5).
+  const locationCell = row.locator("td").nth(5);
   await locationCell.getByText("—").click();
 
   const input = locationCell.locator("textarea");
@@ -99,7 +99,7 @@ test("typing plain text (no pick) triggers the fallback geocode", async ({ page 
   });
 
   const row = page.locator("tr", { hasText: "Visit" }).first();
-  const locationCell = row.locator("td").nth(4);
+  const locationCell = row.locator("td").nth(5);
   await locationCell.getByText("—").click();
 
   const input = locationCell.locator("textarea");

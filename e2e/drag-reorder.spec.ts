@@ -72,14 +72,16 @@ async function dragRowOnto(page: Page, sourceText: string, targetText: string) {
   await page.waitForLoadState("networkidle");
   const sb = (await source.boundingBox())!;
   const tb = (await target.boundingBox())!;
-  // Grab the source on its left edge (over the grip area, away from editors).
-  await page.mouse.move(sb.x + 12, sb.y + sb.height / 2);
+  // Grab the source over the title cell body — past the 28px leftmost "actions"
+  // (delete ✕) column so we don't grab the delete button — and away from editors.
+  const gx = 40;
+  await page.mouse.move(sb.x + gx, sb.y + sb.height / 2);
   await page.mouse.down();
   // Cross the 6px activation threshold.
-  await page.mouse.move(sb.x + 12, sb.y + sb.height / 2 + 12, { steps: 4 });
+  await page.mouse.move(sb.x + gx, sb.y + sb.height / 2 + 12, { steps: 4 });
   // Travel to the target, ending just past its centre so the drop lands there.
-  await page.mouse.move(tb.x + 12, tb.y + tb.height / 2, { steps: 12 });
-  await page.mouse.move(tb.x + 12, tb.y + tb.height * 0.66, { steps: 4 });
+  await page.mouse.move(tb.x + gx, tb.y + tb.height / 2, { steps: 12 });
+  await page.mouse.move(tb.x + gx, tb.y + tb.height * 0.66, { steps: 4 });
   await page.waitForTimeout(60);
   await page.mouse.up();
 }

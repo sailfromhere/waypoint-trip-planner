@@ -140,12 +140,12 @@ test("start time saves and displays as 24h HH:MM (no seconds)", async ({
   const row = page.locator("tr", { hasText: "Hotel Stay" }).first();
   await expect(row).toBeVisible();
 
-  // Start is the 3rd column (title, category, start, …). Click the cell's TOP
-  // edge — NOT the centered value — to prove the whole tall cell is a click
-  // target (regression: after the row-height bump the value became a thin
+  // Start is the 4th cell (actions ✕, title, category, start, …). Click the
+  // cell's TOP edge — NOT the centered value — to prove the whole tall cell is a
+  // click target (regression: after the row-height bump the value became a thin
   // vertically-centered strip, so clicks elsewhere in the cell missed it and
   // start time "couldn't be entered").
-  const startCell = row.locator("td").nth(2);
+  const startCell = row.locator("td").nth(3);
   await startCell.click({ position: { x: 8, y: 5 } });
 
   // S7-4: the time input must accept the value and not blank out. A native
@@ -165,7 +165,7 @@ test("start time saves and displays as 24h HH:MM (no seconds)", async ({
     .locator("tr", { hasText: "Hotel Stay" })
     .first()
     .locator("td")
-    .nth(2);
+    .nth(3);
   await expect(startCell2).toHaveText("14:30");
 });
 

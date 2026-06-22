@@ -30,7 +30,66 @@ export function useCreateItem(tripId: string) {
       if (!res.ok) throw new Error("Failed to create item");
       return res.json() as Promise<ItineraryItem>;
     },
-    onSuccess: () => {
+    // Optimistically append the row so it appears in the same frame the user
+    // clicks "+ Add item" — a plain await-the-POST-then-invalidate (the old
+    // behaviour) made adding feel ~1s laggy. The temp id is swapped for the
+    // real server row in onSuccess, so the user never sees the placeholder id.
+    onMutate: async (data) => {
+      await qc.cancelQueries({ queryKey: ["trips", tripId, "items"] });
+      const prev = qc.getQueryData<ItineraryItem[]>(["trips", tripId, "items"]);
+      const tempId = `temp-${crypto.randomUUID()}`;
+      const now = new Date();
+      const temp: ItineraryItem = {
+        id: tempId,
+        tripId,
+        date: null,
+        startTime: null,
+        endTime: null,
+        durationMinutes: null,
+        originName: null,
+        originLat: null,
+        originLng: null,
+        destinationName: null,
+        destinationLat: null,
+        destinationLng: null,
+        category: "activity",
+        title: "",
+        notes: null,
+        confirmationStatus: "idea",
+        costCents: null,
+        currency: "USD",
+        links: [],
+        sortOrder: 0,
+        fieldProvenance: {},
+        routeGeometry: null,
+        routeDistanceMeters: null,
+        routeDurationSeconds: null,
+        routeSignature: null,
+        createdAt: now,
+        updatedAt: now,
+        ...(data as Partial<ItineraryItem>),
+      };
+      if (prev) {
+        qc.setQueryData<ItineraryItem[]>(
+          ["trips", tripId, "items"],
+          [...prev, temp]
+        );
+      }
+      return { prev, tempId };
+    },
+    onError: (_err, _data, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["trips", tripId, "items"], ctx.prev);
+    },
+    onSuccess: (created, _data, ctx) => {
+      // Swap the temp row for the authoritative server row in place (no
+      // invalidate flash, no transient duplicate from the temp/real id pair).
+      qc.setQueryData<ItineraryItem[]>(["trips", tripId, "items"], (cur) =>
+        cur
+          ? cur.map((item) => (item.id === ctx?.tempId ? created : item))
+          : cur
+      );
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ["trips", tripId, "items"] });
     },
   });

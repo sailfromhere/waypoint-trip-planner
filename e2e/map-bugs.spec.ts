@@ -147,6 +147,54 @@ test("[#1/#d] nearby markers cluster at low zoom, split into labeled points zoom
   expect(pos).toBe("absolute");
 });
 
+test("[security] a marker popup renders a title with HTML as inert text (no XSS)", async ({
+  page,
+}) => {
+  // Self-contained trip (a 4th marker would break the cluster-count asserts in
+  // the shared-trip tests above — the e2e contamination lesson). One item whose
+  // title is an XSS payload: if the popup used setHTML (or unescaped interp),
+  // the <img onerror> fires and sets window.__xssPwned. setDOMContent +
+  // textContent renders it as literal text → no <img>, flag never set.
+  const ctx = await pwRequest.newContext({ baseURL: BASE });
+  const trip = await (
+    await ctx.post("/api/trips", {
+      data: { name: "XSS Trip", startDate: "2026-09-01", endDate: "2026-09-01" },
+    })
+  ).json();
+  const payload = '<img src=x onerror="window.__xssPwned=true">PwnTitle';
+  await ctx.post(`/api/trips/${trip.id}/items`, {
+    data: {
+      title: payload,
+      category: "activity",
+      date: "2026-09-01",
+      sortOrder: 0,
+      destinationName: "Somewhere",
+      destinationLat: 44.46,
+      destinationLng: -110.83,
+    },
+  });
+  await ctx.dispose();
+
+  try {
+    await page.goto(`/trips/${trip.id}`);
+    const point = page.locator(".maplibregl-marker:has(.waypoint-icon)").first();
+    await expect(point).toBeVisible({ timeout: 15000 });
+    await point.click();
+
+    const popup = page.locator(".maplibregl-popup-content");
+    await expect(popup).toBeVisible();
+    // The payload appears as LITERAL text (proves it wasn't parsed as markup)…
+    await expect(popup).toContainText(payload);
+    // …no <img> element was injected, and the onerror handler never ran.
+    await expect(popup.locator("img")).toHaveCount(0);
+    expect(await page.evaluate(() => (window as { __xssPwned?: boolean }).__xssPwned)).toBeFalsy();
+  } finally {
+    const cleanup = await pwRequest.newContext({ baseURL: BASE });
+    await cleanup.delete(`/api/trips/${trip.id}`).catch(() => {});
+    await cleanup.dispose();
+  }
+});
+
 test("[#4] Fit button sits with the map zoom controls", async ({ page }) => {
   await page.goto(`/trips/${tripId}`);
   await expect(page.locator(".maplibregl-map")).toBeVisible();

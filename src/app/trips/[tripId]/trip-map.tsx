@@ -7,6 +7,7 @@ import Supercluster from "supercluster";
 import type { ItineraryItem } from "@/db/types";
 import type { DriveRoute } from "@/app/api/trips/[tripId]/routes/route";
 import { clusteredBoundsCoords, type Pt } from "@/lib/trip-state/anchor";
+import { isUntitled, UNTITLED_LABEL } from "@/lib/format";
 
 const DAY_COLORS = [
   "#3b82f6",
@@ -698,15 +699,41 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
         ? `${item.originName ?? "?"} → ${item.destinationName ?? "?"}`
         : item.destinationName ?? "";
 
+    // Build the popup from DOM nodes (NOT setHTML): every user-entered value
+    // (title, origin/destination names, date) is assigned via textContent, so
+    // markup in a field can never be parsed as HTML — XSS is structurally
+    // impossible here, no escaping to remember on each interpolation.
+    const root = document.createElement("div");
+    root.style.cssText = "font-size:13px;max-width:220px";
+
+    // Title — muted italic "Untitled" placeholder when empty, else bold.
+    const titleEl = document.createElement(isUntitled(item.title) ? "em" : "strong");
+    if (isUntitled(item.title)) {
+      titleEl.style.color = "#9ca3af";
+      titleEl.textContent = UNTITLED_LABEL;
+    } else {
+      titleEl.textContent = item.title;
+    }
+    root.appendChild(titleEl);
+
+    if (subtitle) {
+      const sub = document.createElement("span");
+      sub.style.color = "#666";
+      sub.textContent = subtitle;
+      root.appendChild(document.createElement("br"));
+      root.appendChild(sub);
+    }
+    if (item.date) {
+      const dateEl = document.createElement("span");
+      dateEl.style.color = "#888";
+      dateEl.textContent = item.date;
+      root.appendChild(document.createElement("br"));
+      root.appendChild(dateEl);
+    }
+
     const popup = new maplibregl.Popup({ offset: 20, closeOnClick: true, closeButton: true })
       .setLngLat(anchor)
-      .setHTML(
-        `<div style="font-size:13px;max-width:220px">
-          <strong>${item.title}</strong>
-          ${subtitle ? `<br/><span style="color:#666">${subtitle}</span>` : ""}
-          ${item.date ? `<br/><span style="color:#888">${item.date}</span>` : ""}
-        </div>`
-      )
+      .setDOMContent(root)
       .addTo(map);
 
     activePopupRef.current = popup;
