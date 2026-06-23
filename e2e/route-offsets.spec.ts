@@ -129,7 +129,11 @@ test("partial cross-day overlap is offset only on the shared stretch; unique tai
           const m = (window as unknown as { __waypointMap?: MapHandle }).__waypointMap;
           const style = m && typeof m.getStyle === "function" ? m.getStyle() : null;
           if (!style?.layers) return -1;
-          return style.layers.filter((l) => l.id.startsWith("drive-")).length;
+          // Visible route layers only — exclude the transparent `drive-hit-*`
+          // hover-target layers that share each route's source.
+          return style.layers.filter(
+            (l) => l.id.startsWith("drive-") && !l.id.startsWith("drive-hit-")
+          ).length;
         }),
       { timeout: 20000 }
     )

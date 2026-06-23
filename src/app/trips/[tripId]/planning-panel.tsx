@@ -16,6 +16,7 @@ import type {
   ConversationMessage,
 } from "@/lib/ai/planner";
 import type { PlanningTurn } from "@/db/types";
+import { formatDurationMinutes } from "@/lib/format";
 
 const CATEGORY_LABELS: Record<string, string> = {
   drive: "Drive",
@@ -78,15 +79,6 @@ function formatDate(dateStr: string): string {
   });
 }
 
-function formatDuration(min: number): string {
-  if (min >= 60) {
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return `${h}h${m > 0 ? ` ${m}m` : ""}`;
-  }
-  return `${min}m`;
-}
-
 // Render any tracked field value for the before→after diff.
 function formatFieldValue(key: string, value: unknown): string {
   if (value == null || value === "") return "—";
@@ -97,7 +89,7 @@ function formatFieldValue(key: string, value: unknown): string {
     case "endTime":
       return formatTime(String(value));
     case "durationMinutes":
-      return formatDuration(Number(value));
+      return formatDurationMinutes(Number(value));
     case "costCents":
       return formatCost(Number(value));
     case "category":

@@ -8,7 +8,55 @@ import type { ItineraryItem } from "@/db/types";
 import type { DriveRoute } from "@/app/api/trips/[tripId]/routes/route";
 import { clusteredBoundsCoords, type Pt } from "@/lib/trip-state/anchor";
 import { computeRouteSegments } from "@/lib/trip-state/route-offsets";
-import { isUntitled, UNTITLED_LABEL } from "@/lib/format";
+import {
+  isUntitled,
+  UNTITLED_LABEL,
+  displayTitle,
+  formatDistanceMeters,
+  formatDurationSeconds,
+} from "@/lib/format";
+
+// Drive-route line widths, shared by the draw effect and the hover-highlight
+// handler so the "un-highlight" restore matches exactly. Hover is ~1.8× thicker.
+const ROUTE_BASE_WIDTH: maplibregl.ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  4,
+  1,
+  9,
+  1.8,
+  14,
+  2.5,
+];
+const ROUTE_HOVER_WIDTH: maplibregl.ExpressionSpecification = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  4,
+  2.5,
+  9,
+  3.5,
+  14,
+  4.5,
+];
+const ROUTE_BASE_OPACITY = 0.9;
+
+// What the follow-cursor route tooltip needs. Distance/duration come from the
+// routes payload (or the item's cached columns); names from the item itself.
+interface DriveHoverInfo {
+  distanceMeters: number;
+  durationSeconds: number;
+  originName: string | null;
+  destinationName: string | null;
+}
+
+// The follow-cursor / above-marker tooltip. One element, never two at once: a
+// hovered route shows stats at the cursor; a hovered marker shows its title
+// pinned above the dot. Markers win (the route handler bails over any overlay).
+type HoverTip =
+  | ({ kind: "route"; x: number; y: number } & DriveHoverInfo)
+  | { kind: "marker"; x: number; y: number; title: string };
 
 const DAY_COLORS = [
   "#3b82f6",
@@ -219,7 +267,26 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
   );
   const indexRef = useRef<Supercluster<PointProps> | null>(null);
   const routeSourceIds = useRef<string[]>([]);
+  // Fat transparent hover-target layers (one per drive, sharing the visible
+  // route's source). Kept separate from routeSourceIds so the delegated hover
+  // handler can query exactly these, and so cleanup removes them BEFORE their
+  // shared source.
+  const hitLayerIds = useRef<string[]>([]);
+  // itemId → stats for the hovered route, rebuilt on items/drives change.
+  const driveInfoRef = useRef<Map<string, DriveHoverInfo>>(new Map());
+  // The drive currently highlighted (thicker line), so we can restore it.
+  const hoverIdRef = useRef<string | null>(null);
+  // The marker currently hovered (its title pill is showing). Set on the marker
+  // el's mouseenter, reset on its mouseleave. Used to ignore the spurious map
+  // `mouseout` MapLibre relays from bubbling DOM mouseouts as the cursor crosses
+  // between a marker and its child icon — those must NOT clear the marker pill.
+  const hoveredMarkerRef = useRef<string | null>(null);
+  // Live id→item lookup so a marker's hover handler reads the CURRENT title
+  // (the marker DOM el isn't recreated on rename — see the effect below).
+  const itemsByIdRef = useRef<Map<string, ItineraryItem>>(new Map());
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
+  // The hover tooltip (route stats at the cursor, or a marker title above the dot).
+  const [hoverTip, setHoverTip] = useState<HoverTip | null>(null);
   // Stable refs so the one-time init effect can call the latest callbacks
   // without re-creating the map.
   const fitAllRef = useRef<() => void>(() => {});
@@ -362,6 +429,19 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     }
   }, []);
 
+  // Marker hover → a title pill pinned ABOVE the dot (projected from its location,
+  // so it's stable instead of jittering with the cursor — unlike the route pill).
+  // Skipped for the selected marker (its popup already shows the title).
+  const showMarkerTip = useCallback((itemId: string, lng: number, lat: number) => {
+    const map = mapRef.current;
+    if (!map || selectedRef.current === itemId) return;
+    const item = itemsByIdRef.current.get(itemId);
+    if (!item) return;
+    const p = map.project([lng, lat]);
+    // 13 ≈ marker radius (MARKER_SIZE/2) + a small gap, so the pill clears the dot.
+    setHoverTip({ kind: "marker", x: p.x, y: p.y - 13, title: displayTitle(item.title) });
+  }, []);
+
   // Render the current view's clusters/points as DOM markers, diffing against
   // what's already on the map. Stable (uses refs) so the init effect can bind it
   // to map move/zoom without re-creating the map.
@@ -423,9 +503,21 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
         let marker = markersRef.current.get(key);
         if (!marker) {
           const { el } = createPointElement(cp);
+          el.dataset.itemId = itemId; // test hook + handy for debugging
           el.addEventListener("click", (e) => {
             e.stopPropagation();
             onSelectRef.current(itemId);
+          });
+          // Hover → title pill above the dot. Captured lng/lat are this marker's
+          // coords; showMarkerTip re-projects them at hover time. Added once (the
+          // diff keeps the marker), so no duplicate listeners on re-render.
+          el.addEventListener("mouseenter", () => {
+            hoveredMarkerRef.current = itemId;
+            showMarkerTip(itemId, lng, lat);
+          });
+          el.addEventListener("mouseleave", () => {
+            hoveredMarkerRef.current = null;
+            setHoverTip((t) => (t?.kind === "marker" ? null : t));
           });
           marker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
           markersRef.current.set(key, marker);
@@ -448,7 +540,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     }
 
     applyLabelCollision();
-  }, [applyLabelCollision]);
+  }, [applyLabelCollision, showMarkerTip]);
   useEffect(() => {
     renderClustersRef.current = renderClusters;
   }, [renderClusters]);
@@ -499,9 +591,24 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     const onLoad = () => setMapReady(true);
     map.on("load", onLoad);
 
-    // Clicking empty map (not a marker) clears the selection — keeps the table
-    // row in sync when you click away from a marker.
-    const onBgClick = () => onSelectRef.current(null);
+    // Map click: tapping a drive ROUTE selects it (the only way to open a
+    // drive's popup on touch, where there's no hover), otherwise an empty click
+    // clears the selection (keeps the table row in sync). Markers are DOM
+    // overlays and handle their own clicks, so this only fires for the canvas.
+    // One handler (not a separate layer-scoped listener) sidesteps MapLibre's
+    // lack of click propagation control between layer and map listeners. A small
+    // bbox around the point makes a finger-tap forgiving.
+    const onBgClick = (e: maplibregl.MapMouseEvent) => {
+      const ids = hitLayerIds.current.filter((id) => map.getLayer(id));
+      const r = 8;
+      const box: [maplibregl.PointLike, maplibregl.PointLike] = [
+        [e.point.x - r, e.point.y - r],
+        [e.point.x + r, e.point.y + r],
+      ];
+      const feats = ids.length ? map.queryRenderedFeatures(box, { layers: ids }) : [];
+      const itemId = feats[0]?.properties?.itemId as string | undefined;
+      onSelectRef.current(itemId ?? null);
+    };
     map.on("click", onBgClick);
 
     // Test hook: lets e2e introspect layers (drive routes are canvas-drawn,
@@ -541,6 +648,13 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     const drivesById = new Map(drives.map((d) => [d.itemId, d]));
 
     const draw = () => {
+      // Remove the fat hover-target layers first — they share the visible
+      // routes' sources, and MapLibre throws if a source is removed while a
+      // layer still references it.
+      for (const id of hitLayerIds.current) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      hitLayerIds.current = [];
       for (const id of routeSourceIds.current) {
         if (map.getLayer(id)) map.removeLayer(id);
         if (map.getSource(id)) map.removeSource(id);
@@ -601,15 +715,34 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
               "line-color": getDayColor(item.date),
               // Thin lines throughout — now that overlapping routes sit side-by-side
               // (line-offset), heavy strokes read as one fuzzy blob. Slim at every
-              // zoom, only modestly thicker up close.
-              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1, 9, 1.8, 14, 2.5],
-              "line-opacity": 0.9,
+              // zoom, only modestly thicker up close. Shared constant so the hover
+              // handler can restore it exactly.
+              "line-width": ROUTE_BASE_WIDTH,
+              "line-opacity": ROUTE_BASE_OPACITY,
               // Per-segment lateral offset: 0 on unique stretches, fanned where
               // shared with another day. line-offset is data-driven in MapLibre.
               "line-offset": ["get", "offset"],
             },
           });
           routeSourceIds.current.push(sourceId);
+
+          // Fat, fully-transparent companion line on the SAME source — a generous
+          // hover target so a 1–2px route is easy to point at. Same offset so the
+          // hit area tracks each fanned lane.
+          const hitId = `drive-hit-${item.id}`;
+          map.addLayer({
+            id: hitId,
+            type: "line",
+            source: sourceId,
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": "#000000",
+              "line-width": 14,
+              "line-opacity": 0,
+              "line-offset": ["get", "offset"],
+            },
+          });
+          hitLayerIds.current.push(hitId);
         }
       }
 
@@ -626,6 +759,127 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
       };
     }
   }, [drives, items, hiddenCategories, getDayColor, mapReady]);
+
+  // Lookup table the hover handler reads: itemId → drive stats. Prefer the live
+  // routes payload, fall back to the item's cached route columns. Only drives
+  // that actually have both numbers are included (a tooltip with no stats is
+  // useless); undrawn drives never get queried anyway.
+  useEffect(() => {
+    const byId = new Map(drives.map((d) => [d.itemId, d]));
+    const m = new Map<string, DriveHoverInfo>();
+    for (const item of items) {
+      if (item.category !== "drive") continue;
+      const d = byId.get(item.id);
+      const distanceMeters = d?.distanceMeters ?? item.routeDistanceMeters ?? null;
+      const durationSeconds = d?.durationSeconds ?? item.routeDurationSeconds ?? null;
+      if (distanceMeters == null || durationSeconds == null) continue;
+      m.set(item.id, {
+        distanceMeters,
+        durationSeconds,
+        originName: item.originName ?? null,
+        destinationName: item.destinationName ?? null,
+      });
+    }
+    driveInfoRef.current = m;
+  }, [items, drives]);
+
+  // Live id→item lookup for marker hover (reads the current title even after a
+  // rename, since the marker DOM el persists across renders).
+  useEffect(() => {
+    itemsByIdRef.current = new Map(items.map((i) => [i.id, i]));
+  }, [items]);
+
+  // Hover affordance: a follow-cursor tooltip with the drive's time + distance,
+  // plus pointer cursor and a highlighted line. Bound ONCE per map (guarded by
+  // mapReady); the handlers query whatever hit layers currently exist via a ref,
+  // so they survive the route layers being torn down/rebuilt on every redraw —
+  // no per-layer listeners to leak or restack.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    // Restore the previously-highlighted route to base width, then thicken the
+    // newly-hovered one. Skips no-op churn while moving along the same route.
+    const setHighlight = (itemId: string | null) => {
+      const prev = hoverIdRef.current;
+      if (prev === itemId) return;
+      if (prev && map.getLayer(`drive-${prev}`)) {
+        map.setPaintProperty(`drive-${prev}`, "line-width", ROUTE_BASE_WIDTH);
+        map.setPaintProperty(`drive-${prev}`, "line-opacity", ROUTE_BASE_OPACITY);
+      }
+      if (itemId && map.getLayer(`drive-${itemId}`)) {
+        map.setPaintProperty(`drive-${itemId}`, "line-width", ROUTE_HOVER_WIDTH);
+        map.setPaintProperty(`drive-${itemId}`, "line-opacity", 1);
+      }
+      hoverIdRef.current = itemId;
+    };
+
+    const clear = () => {
+      setHighlight(null);
+      setHoverTip(null);
+      map.getCanvas().style.cursor = "";
+    };
+    // mouseout fires not just when the pointer leaves the canvas, but ALSO from
+    // bubbling DOM mouseouts MapLibre relays as the cursor crosses between a
+    // marker and its child icon — so skip the clear while a marker is hovered
+    // (its own mouseleave, which doesn't bubble, does the real cleanup).
+    const onMouseOut = () => {
+      if (hoveredMarkerRef.current) return;
+      clear();
+    };
+
+    // rAF-coalesce the mousemove flood to at most one query+update per frame.
+    let rafPending = false;
+    let lastEvent: maplibregl.MapMouseEvent | null = null;
+    const canvas = map.getCanvas();
+    const process = () => {
+      rafPending = false;
+      const e = lastEvent;
+      if (!e) return;
+      // Pointer over a DOM overlay (marker / cluster / control), not the canvas:
+      // markers sit on drive endpoints, and their mousemove bubbles to the canvas
+      // and fires this handler — so without this guard, hovering a marker would
+      // also highlight the route under it. Marker hover wins: drop any route
+      // highlight + route pill and bail, leaving a marker pill (if any) intact.
+      if (e.originalEvent.target !== canvas) {
+        if (hoverIdRef.current) setHighlight(null);
+        setHoverTip((t) => (t?.kind === "route" ? null : t));
+        canvas.style.cursor = "";
+        return;
+      }
+      const ids = hitLayerIds.current.filter((id) => map.getLayer(id));
+      const feats = ids.length ? map.queryRenderedFeatures(e.point, { layers: ids }) : [];
+      const itemId = feats[0]?.properties?.itemId as string | undefined;
+      const info = itemId ? driveInfoRef.current.get(itemId) : undefined;
+      if (!itemId || !info) {
+        if (hoverIdRef.current) clear();
+        return;
+      }
+      canvas.style.cursor = "pointer";
+      setHighlight(itemId);
+      setHoverTip({ kind: "route", x: e.point.x, y: e.point.y, ...info });
+    };
+
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      lastEvent = e;
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(process);
+      }
+    };
+    // Pointer left the canvas, or a pan/zoom started — drop a stale tooltip.
+    map.on("mousemove", onMove);
+    map.on("mouseout", onMouseOut);
+    map.on("dragstart", clear);
+    map.on("zoomstart", clear);
+
+    return () => {
+      map.off("mousemove", onMove);
+      map.off("mouseout", onMouseOut);
+      map.off("dragstart", clear);
+      map.off("zoomstart", clear);
+    };
+  }, [mapReady]);
 
   // Popup for the selected item — derived from the item itself (works for
   // drives, which no longer have markers).
@@ -703,6 +957,20 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
       dateEl.textContent = item.date;
       root.appendChild(document.createElement("br"));
       root.appendChild(dateEl);
+    }
+
+    // Drive stats line — same numbers (and formatters) as the hover tooltip, so
+    // click/touch users (no hover) still get distance + time. Plain text node,
+    // so it stays XSS-safe alongside the rest of this DOM-built popup.
+    const driveInfo = item.category === "drive" ? driveInfoRef.current.get(item.id) : undefined;
+    if (driveInfo) {
+      const statsEl = document.createElement("span");
+      statsEl.style.cssText = "color:#2563eb;font-weight:500";
+      statsEl.textContent = `${formatDurationSeconds(driveInfo.durationSeconds)} · ${formatDistanceMeters(
+        driveInfo.distanceMeters
+      )}`;
+      root.appendChild(document.createElement("br"));
+      root.appendChild(statsEl);
     }
 
     // focusAfterOpen:false — MapLibre otherwise moves focus to the popup's close
@@ -798,8 +1066,40 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
         </div>
       )}
 
-      {/* Map container — plain flex-1 element so MapLibre measures a real height. */}
-      <div ref={containerRef} className="flex-1 min-h-0" />
+      {/* Map area — relative flex wrapper so the hover tooltip can be positioned
+          with the canvas-relative pixel coords MapLibre hands us (e.point). The
+          container stays an in-flow flex child (sized by layout) so MapLibre
+          measures a real height on init. */}
+      <div className="relative flex-1 min-h-0 flex">
+        <div ref={containerRef} className="flex-1 min-h-0" />
+
+        {/* Hover tooltip — route stats at the cursor, or a marker title above the
+            dot. pointer-events-none so it never eats the hover it's reacting to
+            (and so it can't steal focus — unlike a MapLibre Popup, see the
+            selected-item popup's focusAfterOpen note). */}
+        {hoverTip && (
+          <div
+            className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full rounded-md bg-zinc-900/90 px-2 py-1 text-[11px] leading-tight text-white shadow-lg ring-1 ring-black/10 backdrop-blur-sm"
+            style={{ left: hoverTip.x, top: hoverTip.y - 12 }}
+          >
+            {hoverTip.kind === "route" ? (
+              <>
+                <div className="font-medium whitespace-nowrap">
+                  {formatDurationSeconds(hoverTip.durationSeconds)} ·{" "}
+                  {formatDistanceMeters(hoverTip.distanceMeters)}
+                </div>
+                {(hoverTip.originName || hoverTip.destinationName) && (
+                  <div className="text-[10px] text-zinc-300 whitespace-nowrap">
+                    {hoverTip.originName ?? "?"} → {hoverTip.destinationName ?? "?"}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="font-medium whitespace-nowrap">{hoverTip.title}</div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Legend */}
       {fitCoords.length > 0 && (
