@@ -20,6 +20,12 @@ import type {
 export type Trip = InferSelectModel<typeof trips>;
 export type Traveler = InferSelectModel<typeof travelers>;
 export type ItineraryItem = InferSelectModel<typeof itineraryItems>;
+// A render-layer item carrying a stable client-side React identity (`_key`).
+// On optimistic create the row gets a `temp-…` id that `onSuccess` swaps for the
+// real server id; keying React off `_key` (set once at create and carried
+// through the swap) keeps the row MOUNTED across that id change, so an
+// in-progress title/location edit isn't destroyed. `_key` is never persisted.
+export type ItineraryItemRow = ItineraryItem & { _key?: string };
 export type PlanningTurn = InferSelectModel<typeof planningTurns>;
 export type TripTask = InferSelectModel<typeof tripTasks>;
 export type ChecklistTemplate = InferSelectModel<typeof checklistTemplates>;

@@ -705,7 +705,18 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
       root.appendChild(dateEl);
     }
 
-    const popup = new maplibregl.Popup({ offset: 20, closeOnClick: true, closeButton: true })
+    // focusAfterOpen:false — MapLibre otherwise moves focus to the popup's close
+    // button when it opens (its default). This effect re-runs on every `items`
+    // change, so editing a field on the SELECTED, located row re-opens the popup
+    // and would yank focus out of the cell you're typing in (e.g. the Category
+    // <select> snapping shut right after you picked a location). The popup still
+    // shows; it just no longer steals focus.
+    const popup = new maplibregl.Popup({
+      offset: 20,
+      closeOnClick: true,
+      closeButton: true,
+      focusAfterOpen: false,
+    })
       .setLngLat(anchor)
       .setDOMContent(root)
       .addTo(map);

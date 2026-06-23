@@ -5,15 +5,28 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { ItineraryItem } from "@/db/types";
+import type { ItineraryItem, ItineraryItemRow } from "@/db/types";
 
 export function useItineraryItems(tripId: string) {
-  return useQuery<ItineraryItem[]>({
+  const qc = useQueryClient();
+  return useQuery<ItineraryItemRow[]>({
     queryKey: ["trips", tripId, "items"],
     queryFn: async () => {
       const res = await fetch(`/api/trips/${tripId}/items`);
       if (!res.ok) throw new Error("Failed to fetch items");
-      return res.json();
+      const rows = (await res.json()) as ItineraryItemRow[];
+      // Carry the stable client `_key` across the refetch: server rows have
+      // none, so without this any items-invalidation (e.g. the debounced
+      // text-commit geocode) would re-key a row created this session →
+      // remount → an in-progress edit is lost. Match on the real id, which is
+      // stable once the optimistic temp→real swap has happened.
+      const prev = qc.getQueryData<ItineraryItemRow[]>(["trips", tripId, "items"]);
+      if (!prev) return rows;
+      const keyById = new Map(prev.map((r) => [r.id, r._key]));
+      return rows.map((r) => {
+        const k = keyById.get(r.id);
+        return k ? { ...r, _key: k } : r;
+      });
     },
   });
 }
@@ -36,10 +49,13 @@ export function useCreateItem(tripId: string) {
     // real server row in onSuccess, so the user never sees the placeholder id.
     onMutate: async (data) => {
       await qc.cancelQueries({ queryKey: ["trips", tripId, "items"] });
-      const prev = qc.getQueryData<ItineraryItem[]>(["trips", tripId, "items"]);
+      const prev = qc.getQueryData<ItineraryItemRow[]>(["trips", tripId, "items"]);
       const tempId = `temp-${crypto.randomUUID()}`;
       const now = new Date();
-      const temp: ItineraryItem = {
+      const temp: ItineraryItemRow = {
+        // Stable React identity that survives the temp→real id swap below, so the
+        // row stays mounted (and any in-progress edit alive) once the POST lands.
+        _key: tempId,
         id: tempId,
         tripId,
         date: null,
@@ -70,7 +86,7 @@ export function useCreateItem(tripId: string) {
         ...(data as Partial<ItineraryItem>),
       };
       if (prev) {
-        qc.setQueryData<ItineraryItem[]>(
+        qc.setQueryData<ItineraryItemRow[]>(
           ["trips", tripId, "items"],
           [...prev, temp]
         );
@@ -83,14 +99,19 @@ export function useCreateItem(tripId: string) {
     onSuccess: (created, _data, ctx) => {
       // Swap the temp row for the authoritative server row in place (no
       // invalidate flash, no transient duplicate from the temp/real id pair).
-      qc.setQueryData<ItineraryItem[]>(["trips", tripId, "items"], (cur) =>
+      // Carry the temp `_key` onto the real row so React keeps the SAME element
+      // across the id change — otherwise the row remounts and kills an
+      // in-progress title/location edit (the reported bug). Deliberately NO
+      // onSettled refetch here: the POST response is authoritative for this row
+      // and affects no others, and a refetch would drop `_key` (server rows
+      // carry none) → re-key → remount, re-introducing the bug.
+      qc.setQueryData<ItineraryItemRow[]>(["trips", tripId, "items"], (cur) =>
         cur
-          ? cur.map((item) => (item.id === ctx?.tempId ? created : item))
+          ? cur.map((item) =>
+              item.id === ctx?.tempId ? { ...created, _key: ctx.tempId } : item
+            )
           : cur
       );
-    },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ["trips", tripId, "items"] });
     },
   });
 }
@@ -131,7 +152,7 @@ export function useUpdateItem(tripId: string) {
     },
     onMutate: async ({ itemId, data }) => {
       await qc.cancelQueries({ queryKey: ["trips", tripId, "items"] });
-      const prev = qc.getQueryData<ItineraryItem[]>([
+      const prev = qc.getQueryData<ItineraryItemRow[]>([
         "trips",
         tripId,
         "items",
@@ -167,7 +188,14 @@ export function useUpdateItem(tripId: string) {
         qc.setQueryData(["trips", tripId, "items"], ctx.prev);
     },
     onSettled: (_data, _err, vars) => {
-      qc.invalidateQueries({ queryKey: ["trips", tripId, "items"] });
+      // NO items refetch: the optimistic write above already holds the
+      // authoritative values (it mirrors the server's field + provenance
+      // stamping, see route.ts), and the PATCH only ever returns the single
+      // edited row — so invalidating items was pure churn that refetched and
+      // re-rendered the WHOLE table a beat after the edit, dismissing a
+      // just-opened native <select> and disrupting focus (the reported bug).
+      // Routes DO recompute when a routing field changes (geography keystone —
+      // drive times must follow the new coords/order), so keep that one.
       if (vars && Object.keys(vars.data).some((k) => ROUTING_FIELDS.has(k))) {
         qc.invalidateQueries({ queryKey: ["trips", tripId, "routes"] });
       }

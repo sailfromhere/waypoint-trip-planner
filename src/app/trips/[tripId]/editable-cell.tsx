@@ -168,8 +168,19 @@ export function EditableCell({
     const labels = type === "category" ? CATEGORY_LABELS : STATUS_LABELS;
     return (
       <select
+        // UNCONTROLLED (defaultValue + key), same pattern as the time/date
+        // inputs below — defensive against a re-render of this cell disturbing
+        // an OPEN native popup: React reconciles a controlled <select>'s value
+        // on every render (a DOM write some engines dismiss the popup on), while
+        // defaultValue leaves it alone. (The main "dropdown snaps shut after I
+        // pick a location" bug was actually the MAP popup stealing focus — see
+        // trip-map.tsx focusAfterOpen:false — but this keeps the control robust
+        // to row re-renders regardless.) `key` remounts the control when the
+        // value changes for a real reason (the user's own pick, an AI revise,
+        // undo) so it still reflects external updates.
+        key={String(value ?? "")}
         ref={inputRef as React.RefObject<HTMLSelectElement>}
-        value={String(value ?? "")}
+        defaultValue={String(value ?? "")}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

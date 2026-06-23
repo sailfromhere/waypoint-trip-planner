@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useMemo,
   useState,
   useCallback,
@@ -39,7 +40,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ItineraryItem } from "@/db/types";
+import type { ItineraryItem, ItineraryItemRow } from "@/db/types";
 import {
   useItineraryItems,
   useCreateItem,
@@ -290,7 +291,14 @@ function dayKeyOf(item: Pick<ItineraryItem, "date">): string {
 // affordance is the only signal needed (no grip glyph). The active editors inside
 // each cell stop pointer-down propagation, so dragging to select text in a cell
 // won't start a row drag; everywhere else on the row begins one.
-function SortableRow({
+// Memoized so a `routes` refetch (or any parent re-render that doesn't change
+// THIS row) can't re-render the row — re-rendering the row re-renders its cells,
+// and re-rendering a cell's controlled native <select> dismisses an open popup
+// (the reported Category-dropdown bug). TanStack returns a referentially stable
+// `row` while data + columns are unchanged, so the default shallow prop compare
+// skips correctly; a real change to the item, columns (reorder/resize/show-hide),
+// or selection produces a new `row`/`selected` and still re-renders.
+const SortableRow = memo(function SortableRow({
   row,
   selected,
   onSelect,
@@ -377,7 +385,7 @@ function SortableRow({
       ))}
     </tr>
   );
-}
+});
 
 // Floating copy that tracks the pointer during a drag (no in-place ghost). A
 // faithful full-row render: a one-row mini-table reusing the SAME column defs,
@@ -647,9 +655,12 @@ function DayGroupTable({
     enableColumnResizing: true,
     columnResizeMode: "onChange",
     getCoreRowModel: getCoreRowModel(),
-    // Stable per-item row ids so dnd identifies rows by item id (not array
-    // index) and React moves the right DOM node when the order changes.
-    getRowId: (row) => row.id,
+    // Use the stable client `_key` (falling back to the item id) as the row id,
+    // so it survives the optimistic-create temp→real id swap. This id flows into
+    // each cell's id and thus every `<td key={cell.id}>` — keying off `_key`
+    // keeps the cells (and any open editor) MOUNTED across the swap. dnd still
+    // identifies rows by the real item id (useSortable / SortableContext below).
+    getRowId: (row) => (row as ItineraryItemRow)._key ?? row.id,
   });
   // Drop target at the END of the day (the "+ Add item" footer) — lets a
   // cross-day drop append after the last row, which row targets can't express.
@@ -791,7 +802,12 @@ function DayGroupTable({
             >
               {table.getRowModel().rows.map((row) => (
                 <SortableRow
-                  key={row.id}
+                  // Key off the stable client `_key` (not the item id) so the
+                  // row stays mounted when an optimistic create's temp id is
+                  // swapped for the real server id — otherwise the row remounts
+                  // and an in-progress title/location edit is lost. dnd/server
+                  // ops keep using the real id (getRowId / useSortable below).
+                  key={(row.original as ItineraryItemRow)._key ?? row.original.id}
                   row={row}
                   selected={selectedItemId === row.original.id}
                   onSelect={onItemSelect}
