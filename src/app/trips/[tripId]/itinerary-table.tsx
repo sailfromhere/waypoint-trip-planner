@@ -51,6 +51,7 @@ import {
   type ReorderChange,
 } from "@/lib/hooks/use-itinerary";
 import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state/sequence";
+import { formatItemTimeLabel, formatItemTzBadge } from "@/lib/format";
 import { EditableCell } from "./editable-cell";
 import { LocationCell } from "./location-cell";
 
@@ -63,7 +64,8 @@ function useColumns(
   onUpdate: (itemId: string, field: string, value: string | number | null) => void,
   onDelete: (itemId: string) => void,
   onPickLocation: (itemId: string, kind: LocationKind, name: string, lat: number, lng: number) => void,
-  onTextLocation: (itemId: string, field: string, value: string | null) => void
+  onTextLocation: (itemId: string, field: string, value: string | null) => void,
+  homeTimezone: string | null | undefined
 ): ColumnDef<ItineraryItem, unknown>[] {
   return useMemo(
     () =>
@@ -95,15 +97,31 @@ function useColumns(
         }),
         col.accessor("startTime", {
           header: "Start",
-          size: 90,
-          cell: ({ row, getValue }) => (
-            <EditableCell
-              value={getValue()}
-              type="time"
-              placeholder="—"
-              onSave={(v) => onUpdate(row.original.id, "startTime", v)}
-            />
-          ),
+          size: 96,
+          cell: ({ row, getValue }) => {
+            const badge = formatItemTzBadge(row.original, homeTimezone);
+            return (
+              <EditableCell
+                value={getValue()}
+                type="time"
+                placeholder="—"
+                onSave={(v) => onUpdate(row.original.id, "startTime", v)}
+                adornment={
+                  badge ? (
+                    <span
+                      title={
+                        formatItemTimeLabel(row.original, homeTimezone) ??
+                        undefined
+                      }
+                      className="shrink-0 text-[9px] font-medium uppercase tracking-tight text-zinc-400 dark:text-zinc-500"
+                    >
+                      {badge}
+                    </span>
+                  ) : undefined
+                }
+              />
+            );
+          },
         }),
         col.accessor("durationMinutes", {
           header: "Duration",
@@ -216,7 +234,7 @@ function useColumns(
           ),
         }),
       ] as ColumnDef<ItineraryItem, unknown>[],
-    [tripId, onUpdate, onDelete, onPickLocation, onTextLocation]
+    [tripId, onUpdate, onDelete, onPickLocation, onTextLocation, homeTimezone]
   );
 }
 
@@ -840,6 +858,7 @@ export function ItineraryTable({
   onItemSelect,
   dayWarnings,
   drives,
+  homeTimezone,
   onLocationEdited,
 }: {
   tripId: string;
@@ -847,6 +866,8 @@ export function ItineraryTable({
   onItemSelect: (itemId: string) => void;
   dayWarnings?: DayWarning[];
   drives?: { itemId: string; durationSeconds: number }[];
+  // Trip-level fallback tz for the sequencer (per-item tz on the rows wins).
+  homeTimezone?: string | null;
   // Fired when a location field is committed as PLAIN TEXT (no place picked) so
   // the parent can fall back to fuzzy geocoding (S7-5). A picked place already
   // carries exact coords and does NOT fire this.
@@ -1247,7 +1268,8 @@ export function ItineraryTable({
     handleUpdate,
     handleDelete,
     handlePickLocation,
-    handleTextLocation
+    handleTextLocation,
+    homeTimezone
   );
   const groups = useMemo(() => groupByDate(items ?? []), [items]);
 
@@ -1321,7 +1343,11 @@ export function ItineraryTable({
                 headerDrag={headerDrag}
                 onAddItem={handleAddItem}
                 onAutoSchedule={() =>
-                  applySchedule(sequenceDay(group.items, driveSecondsById))
+                  applySchedule(
+                    sequenceDay(group.items, driveSecondsById, {
+                      homeTimezone,
+                    })
+                  )
                 }
                 selectedItemId={selectedItemId}
                 onItemSelect={onItemSelect}
@@ -1394,7 +1420,11 @@ export function ItineraryTable({
             {(items ?? []).some((i) => i.date) && (
               <button
                 onClick={() =>
-                  applySchedule(sequenceTrip(items ?? [], driveSecondsById))
+                  applySchedule(
+                    sequenceTrip(items ?? [], driveSecondsById, {
+                      homeTimezone,
+                    })
+                  )
                 }
                 className="ml-auto text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
                 title="Fill blank start times across all days (kept: your times & booked items)"

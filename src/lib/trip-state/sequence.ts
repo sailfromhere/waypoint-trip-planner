@@ -1,4 +1,11 @@
 import type { ItineraryItem, FieldProvenance } from "@/db/types";
+import { DateTime } from "luxon";
+import {
+  localToInstant,
+  instantToLocal,
+  itemOriginTz,
+  itemLocalTz,
+} from "./tz";
 
 /**
  * Deterministic schedule sequencing — auto-fill blank start/end times.
@@ -7,10 +14,20 @@ import type { ItineraryItem, FieldProvenance } from "@/db/types";
  * each a clock time by accumulating durations from a day-start cursor. This is
  * the data the Calendar view needs (untimed items can't be placed on a grid).
  *
- * Two keystones shape the rules:
+ * The cursor is a UTC INSTANT (Luxon), not minutes-of-day, so a cross-tz leg
+ * (flight / long drive) is handled correctly: `startTime` is emitted in the
+ * item's ORIGIN tz, `endTime` in its DESTINATION tz, and the cursor that carries
+ * forward is the real arrival instant — so the next item sequences in the
+ * arrival zone automatically. For a single-tz trip this reduces EXACTLY to the
+ * old minute arithmetic (every item resolves to the same zone, so wall-clock
+ * round-trips unchanged).
+ *
+ * Three keystones shape the rules:
  *  - GROUNDED GEOGRAPHY: a `drive` item's duration comes from the routing API
  *    (`drives[]` → `driveSecondsById`), never invented. We only fall back to a
  *    coarse default when the item hasn't been routed yet.
+ *  - ELAPSED IS TRUTH: `durationMinutes` (real elapsed time) advances the cursor,
+ *    never a wall-clock subtraction across a tz boundary.
  *  - SACRED HUMAN DATA: we never overwrite a time the human set or a booked
  *    item's facts. Items that already have a `startTime` (user anchors, booked
  *    items) are ANCHORS: we snap the cursor to them and advance past them, but
@@ -37,21 +54,23 @@ const DEFAULT_DAY_START_MINUTES = 9 * 60; // 09:00
 
 export interface ScheduleChange {
   itemId: string;
-  startTime: string; // "HH:MM"
-  endTime: string | null; // "HH:MM" or null when duration is unknown
+  startTime: string; // "HH:MM" wall-clock in the item's origin tz
+  endTime: string | null; // "HH:MM" in the DESTINATION tz, or null when unknown
+  // Arrival calendar date when it differs from the item's date (red-eye / long
+  // cross-tz leg). Informational — the single-`date` writer ignores it; the
+  // calendar derives rollover from duration. null when same-day.
+  endDate?: string | null;
   before: { startTime: string | null; endTime: string | null };
 }
 
-// Postgres `time` comes back as "HH:MM:SS" (or "HH:MM"); parse leniently.
-function parseMinutes(t: string | null): number | null {
+// Postgres `time` comes back as "HH:MM:SS" (or "HH:MM"); normalize to "HH:MM".
+function hhmmOf(t: string | null): string | null {
   if (!t) return null;
   const m = /^(\d{1,2}):(\d{2})/.exec(t.trim());
-  if (!m) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
 }
 
-function formatMinutes(total: number): string {
-  // Clamp into a single day so a runaway cursor doesn't produce "26:00".
+function minutesToHHMM(total: number): string {
   const clamped = Math.max(0, Math.min(total, 23 * 60 + 59));
   const h = Math.floor(clamped / 60);
   const m = clamped % 60;
@@ -96,66 +115,98 @@ function durationOf(
 /**
  * Sequence ONE day's items. `items` need not be pre-sorted — we sort by
  * sortOrder here. Returns only the items whose times actually change.
+ *
+ * `opts.homeTimezone` is the trip-level fallback tz for items whose coords
+ * haven't resolved a tz yet (keeps a single-tz trip consistent); per-item tz on
+ * the rows takes precedence.
  */
 export function sequenceDay(
   items: ItineraryItem[],
   driveSecondsById?: Map<string, number>,
-  opts?: { dayStartMinutes?: number }
+  opts?: { dayStartMinutes?: number; homeTimezone?: string | null }
 ): ScheduleChange[] {
   const ordered = [...items].sort((a, b) => a.sortOrder - b.sortOrder);
   if (ordered.length === 0) return [];
 
-  // Seed the cursor from the earliest USER/BOOKED anchor (not a prior auto-fill),
-  // else a default.
-  const firstAnchor = ordered
-    .filter(isUserAnchor)
-    .map((i) => parseMinutes(i.startTime))
-    .find((m): m is number => m != null);
-  let cursor = opts?.dayStartMinutes ?? firstAnchor ?? DEFAULT_DAY_START_MINUTES;
+  const homeTz = opts?.homeTimezone ?? null;
+  const dayDate = ordered.find((i) => i.date)?.date ?? null;
+  if (!dayDate) return []; // no date → nothing to place on a clock
+  const dayTz = itemOriginTz(ordered[0], homeTz);
+
+  // Seed the cursor (a UTC instant) from the earliest USER/BOOKED anchor in
+  // sortOrder (not a prior auto-fill), else the day-start default in the day tz.
+  let cursor: DateTime = ((): DateTime => {
+    for (const i of ordered) {
+      if (isUserAnchor(i) && i.startTime && i.date) {
+        const inst = localToInstant(i.date, i.startTime, itemOriginTz(i, homeTz));
+        if (inst.isValid) return inst;
+      }
+    }
+    const startMin = opts?.dayStartMinutes ?? DEFAULT_DAY_START_MINUTES;
+    return localToInstant(dayDate, minutesToHHMM(startMin), dayTz);
+  })();
 
   const changes: ScheduleChange[] = [];
 
   for (const item of ordered) {
-    const anchor = parseMinutes(item.startTime);
+    const originTz = itemOriginTz(item, homeTz);
+    const destTz = itemLocalTz(item, homeTz);
     const dur = durationOf(item, driveSecondsById);
+    const anchorInst =
+      item.startTime && item.date
+        ? localToInstant(item.date, item.startTime, originTz)
+        : null;
 
-    if (anchor != null && isUserAnchor(item)) {
-      // Respect a human/booked time: snap the cursor forward to it (never
-      // backwards — keep monotonic), then advance past it. No change emitted.
-      cursor = Math.max(cursor, anchor) + dur;
+    if (anchorInst?.isValid && isUserAnchor(item)) {
+      // Respect a human/booked time: snap the cursor forward to it (monotonic,
+      // never backwards), then advance past it. No change emitted.
+      if (anchorInst.toMillis() > cursor.toMillis()) cursor = anchorInst;
+      cursor = cursor.plus({ minutes: dur });
       continue;
     }
 
     // A booked item with no usable user time is hard-locked (we can't write its
     // facts) — advance the cursor but don't propose a change.
     if (isBooked(item)) {
-      cursor += dur;
+      cursor = cursor.plus({ minutes: dur });
       continue;
     }
 
     // Blank OR a prior auto-fill (historical_estimate): (re)compute from cursor.
-    const start = cursor;
+    const startInst = cursor;
     const knownDuration =
       (item.category === "drive" &&
         (driveSecondsById?.get(item.id) ?? 0) > 0) ||
       (item.durationMinutes != null && item.durationMinutes > 0);
-    const end = knownDuration ? start + dur : null;
+    const endInst = knownDuration ? startInst.plus({ minutes: dur }) : null;
+
+    // Wall-clock start in the ORIGIN tz, clamped to the item's own day (parity
+    // with the old minute sequencer: a fill never rolls a START past midnight).
+    const startLocal = instantToLocal(startInst, originTz);
+    const startHHMM =
+      startLocal.date === dayDate ? startLocal.hhmm : "23:59";
+
+    // Wall-clock end in the DESTINATION tz (cross-tz aware). endDate is carried
+    // when the arrival lands on a later calendar day (red-eye).
+    const endLocal = endInst ? instantToLocal(endInst, destTz) : null;
+    const endHHMM = endLocal ? endLocal.hhmm : null;
+    const endDate = endLocal && endLocal.date !== dayDate ? endLocal.date : null;
 
     // Skip a no-op (idempotent re-runs / unchanged days) so the Undo banner
     // doesn't claim to have "filled" times that didn't move.
     const unchanged =
-      parseMinutes(item.startTime) === start &&
-      (parseMinutes(item.endTime) ?? null) === end;
+      hhmmOf(item.startTime) === startHHMM && hhmmOf(item.endTime) === endHHMM;
     if (!unchanged) {
       changes.push({
         itemId: item.id,
-        startTime: formatMinutes(start),
-        endTime: end != null ? formatMinutes(end) : null,
+        startTime: startHHMM,
+        endTime: endHHMM,
+        endDate,
         before: { startTime: item.startTime, endTime: item.endTime },
       });
     }
 
-    cursor = start + dur;
+    cursor = startInst.plus({ minutes: dur });
   }
 
   return changes;
@@ -167,7 +218,8 @@ export function sequenceDay(
  */
 export function sequenceTrip(
   items: ItineraryItem[],
-  driveSecondsById?: Map<string, number>
+  driveSecondsById?: Map<string, number>,
+  opts?: { homeTimezone?: string | null }
 ): ScheduleChange[] {
   const byDay = new Map<string, ItineraryItem[]>();
   for (const item of items) {
@@ -177,7 +229,11 @@ export function sequenceTrip(
   }
   const out: ScheduleChange[] = [];
   for (const dayItems of byDay.values()) {
-    out.push(...sequenceDay(dayItems, driveSecondsById));
+    out.push(
+      ...sequenceDay(dayItems, driveSecondsById, {
+        homeTimezone: opts?.homeTimezone,
+      })
+    );
   }
   return out;
 }

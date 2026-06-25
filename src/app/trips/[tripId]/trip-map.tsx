@@ -15,6 +15,7 @@ import {
   formatDistanceMeters,
   formatDurationSeconds,
   formatItineraryDate,
+  formatItemTimeLabel,
 } from "@/lib/format";
 
 // Drive-route line widths, shared by the draw effect and the hover-highlight
@@ -248,6 +249,8 @@ interface TripMapProps {
   drives: DriveRoute[];
   selectedItemId: string | null;
   onItemSelect: (itemId: string | null) => void;
+  // Trip home tz — the frame the popup time label annotates against.
+  homeTimezone?: string | null;
 }
 
 interface MarkerPoint {
@@ -257,7 +260,7 @@ interface MarkerPoint {
   props: PointProps;
 }
 
-export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMapProps) {
+export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimezone }: TripMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   // All rendered markers (points + clusters), keyed `point-<id>` / `cluster-<id>`.
@@ -294,6 +297,10 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
   const renderClustersRef = useRef<() => void>(() => {});
   const onSelectRef = useRef(onItemSelect);
   const selectedRef = useRef(selectedItemId);
+  const homeTzRef = useRef(homeTimezone);
+  useEffect(() => {
+    homeTzRef.current = homeTimezone;
+  }, [homeTimezone]);
   useEffect(() => {
     onSelectRef.current = onItemSelect;
   }, [onItemSelect]);
@@ -975,6 +982,20 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
       dateEl.className = "wp-date";
       dateEl.textContent = formatItineraryDate(item.date);
       badges.appendChild(dateEl);
+    }
+    // Time: tz-aware local label (e.g. "19:00 EST" or "09:00 PST → 17:30 EST"
+    // for a cross-tz flight/drive), falling back to the plain start time when
+    // the item sits in the home tz. textContent only (XSS-safe).
+    const timeLabel =
+      formatItemTimeLabel(item, homeTzRef.current) ??
+      (item.startTime
+        ? /^(\d{1,2}):(\d{2})/.exec(item.startTime.trim())?.[0] ?? null
+        : null);
+    if (timeLabel) {
+      const timeEl = document.createElement("span");
+      timeEl.className = "wp-date";
+      timeEl.textContent = timeLabel;
+      badges.appendChild(timeEl);
     }
     root.appendChild(badges);
 

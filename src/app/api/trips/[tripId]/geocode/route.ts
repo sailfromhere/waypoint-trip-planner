@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { itineraryItems } from "@/db/schema";
+import { itineraryItems, trips } from "@/db/schema";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { geocoding } from "@/lib/integrations";
 import type { FieldProvenance } from "@/db/types";
 import { largestClusterCentroid, type Pt } from "@/lib/trip-state/anchor";
+import tzLookup from "tz-lookup";
+
+// IANA timezone from coords — offline, no key. A pure machine-derived cache
+// (outside the provenance/sacred-data system), recomputed when an endpoint moves.
+function tzFor(lat: number | null, lng: number | null): string | null {
+  if (lat == null || lng == null) return null;
+  try {
+    return tzLookup(lat, lng);
+  } catch {
+    return null;
+  }
+}
 
 interface GeocodedResult {
   id: string;
@@ -49,6 +61,14 @@ export async function POST(
 
   const filtered = itemIds ? allItems.filter((item) => itemIds.includes(item.id)) : allItems;
   const results: GeocodedResult[] = [];
+
+  // Candidates for the trip's home timezone (set lazily, below): the destination
+  // tz of dated items, earliest date wins. The trip "lives" where its first
+  // grounded stop is.
+  const homeCandidates: { date: string | null; tz: string }[] = [];
+  const noteHomeTz = (date: string | null, tz: string | null) => {
+    if (tz) homeCandidates.push({ date, tz });
+  };
 
   // Proximity bias: nudge ambiguous names toward where the trip actually is.
   // Anchor on the LARGEST CLUSTER of coords (not the mean/median) — robust even
@@ -131,31 +151,99 @@ export async function POST(
         }
       }
 
+      // Derive endpoint timezones from the final coords (fresh this run, else
+      // existing). Recompute when coords moved OR backfill when tz is missing.
+      const finalOriginLat = (updates.originLat as number) ?? item.originLat;
+      const finalOriginLng = (updates.originLng as number) ?? item.originLng;
+      if (updates.originLat != null || item.originTimezone == null) {
+        const tz = tzFor(finalOriginLat, finalOriginLng);
+        if (tz && tz !== item.originTimezone) {
+          updates.originTimezone = tz;
+          changed = true;
+        }
+      }
+      const finalDestLat = (updates.destinationLat as number) ?? item.destinationLat;
+      const finalDestLng = (updates.destinationLng as number) ?? item.destinationLng;
+      if (updates.destinationLat != null || item.destinationTimezone == null) {
+        const tz = tzFor(finalDestLat, finalDestLng);
+        if (tz && tz !== item.destinationTimezone) {
+          updates.destinationTimezone = tz;
+          changed = true;
+        }
+      }
+      noteHomeTz(
+        item.date,
+        (updates.destinationTimezone as string) ?? item.destinationTimezone
+      );
+
       if (changed) {
         await db.update(itineraryItems).set(updates).where(eq(itineraryItems.id, item.id));
         results.push(result);
       }
     } else {
-      // Non-drive: geocode destinationName.
-      if (!shouldGeocode("destinationLat", item.destinationLat)) continue;
-      const geo = await geocoding.geocode(item.destinationName, { proximity: proximity() });
-      if (!geo) continue;
-      freshCoords.push({ lat: geo.lat, lng: geo.lng });
+      // Non-drive: geocode destinationName when needed, then derive its tz.
+      const updates: Record<string, unknown> = {};
+      let destLat = item.destinationLat;
+      let destLng = item.destinationLng;
+      let changed = false;
 
-      await db
-        .update(itineraryItems)
-        .set({
-          destinationLat: geo.lat,
-          destinationLng: geo.lng,
-          fieldProvenance: {
+      if (shouldGeocode("destinationLat", item.destinationLat)) {
+        const geo = await geocoding.geocode(item.destinationName, { proximity: proximity() });
+        if (geo) {
+          destLat = geo.lat;
+          destLng = geo.lng;
+          freshCoords.push({ lat: geo.lat, lng: geo.lng });
+          updates.destinationLat = geo.lat;
+          updates.destinationLng = geo.lng;
+          updates.fieldProvenance = {
             ...prov,
             destinationLat: "live_researched",
             destinationLng: "live_researched",
-          },
-          updatedAt: new Date(),
-        })
-        .where(eq(itineraryItems.id, item.id));
-      results.push({ id: item.id, destinationLat: geo.lat, destinationLng: geo.lng });
+          };
+          changed = true;
+        }
+      }
+
+      // Derive tz when coords are fresh OR the tz column is empty (backfill).
+      if (updates.destinationLat != null || item.destinationTimezone == null) {
+        const tz = tzFor(destLat, destLng);
+        if (tz && tz !== item.destinationTimezone) {
+          updates.destinationTimezone = tz;
+          changed = true;
+        }
+      }
+      noteHomeTz(
+        item.date,
+        (updates.destinationTimezone as string) ?? item.destinationTimezone
+      );
+
+      if (changed) {
+        updates.updatedAt = new Date();
+        await db.update(itineraryItems).set(updates).where(eq(itineraryItems.id, item.id));
+        results.push({
+          id: item.id,
+          destinationLat: destLat ?? undefined,
+          destinationLng: destLng ?? undefined,
+        });
+      }
+    }
+  }
+
+  // Lazily set the trip's home timezone (display axis + coord-less fallback) from
+  // the earliest dated grounded stop, only if not already set.
+  if (homeCandidates.length > 0) {
+    const [tripRow] = await db
+      .select({ homeTimezone: trips.homeTimezone })
+      .from(trips)
+      .where(eq(trips.id, tripId));
+    if (tripRow && tripRow.homeTimezone == null) {
+      const home = homeCandidates.sort((a, b) =>
+        (a.date ?? "9999").localeCompare(b.date ?? "9999")
+      )[0].tz;
+      await db
+        .update(trips)
+        .set({ homeTimezone: home, updatedAt: new Date() })
+        .where(eq(trips.id, tripId));
     }
   }
 

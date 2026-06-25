@@ -5,6 +5,7 @@ import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import luxon3Plugin from "@fullcalendar/luxon3";
 import type {
   DayCellContentArg,
   EventClickArg,
@@ -14,10 +15,18 @@ import type {
   EventMountArg,
 } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
+import { DateTime } from "luxon";
 import type { ItineraryItem } from "@/db/types";
 import { useUpdateItem } from "@/lib/hooks/use-itinerary";
 import { DAY_COLORS, buildDayColorMap } from "@/lib/trip-state/day-colors";
-import { isUntitled, UNTITLED_LABEL } from "@/lib/format";
+import { isUntitled, UNTITLED_LABEL, formatItemTimeLabel } from "@/lib/format";
+import {
+  localToInstant,
+  instantToLocal,
+  itemOriginTz,
+  itemLocalTz,
+  systemTimezone,
+} from "@/lib/trip-state/tz";
 
 // ── Local date/time helpers ──────────────────────────────────────────────────
 // FullCalendar works in the browser's local time. Build event strings WITHOUT a
@@ -36,12 +45,6 @@ function fmtDate(d: Date): string {
   ).padStart(2, "0")}`;
 }
 
-function fmtTime(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(
-    d.getMinutes()
-  ).padStart(2, "0")}`;
-}
-
 function minutesBetween(a: Date, b: Date): number {
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
 }
@@ -55,11 +58,19 @@ export function CalendarView({
 }: {
   tripId: string;
   items: ItineraryItem[];
-  trip: { startDate: string | null };
+  trip: { startDate: string | null; homeTimezone: string | null };
   selectedItemId: string | null;
   onItemSelect: (itemId: string) => void;
 }) {
   const updateItem = useUpdateItem(tripId);
+
+  // The grid runs in a single display tz (the trip home tz) so block geometry is
+  // honest — real durations, real ordering, a cross-tz flight draws its ELAPSED
+  // length, a red-eye rolls past midnight. Event LABELS show each item's own
+  // local time (see formatItemTimeLabel). `gridTz` is the concrete IANA name we
+  // also use to convert dropped instants back to wall-clock.
+  const homeTz = trip.homeTimezone;
+  const gridTz = homeTz ?? systemTimezone();
 
   const dayColors = useMemo(
     () => buildDayColorMap(items.map((i) => i.date)),
@@ -85,32 +96,44 @@ export function CalendarView({
           backgroundColor: color,
           borderColor: color,
           editable: !booked,
-          extendedProps: { itemId: item.id, color },
+          extendedProps: { itemId: item.id, color, timeLabel: null },
         } satisfies EventInput;
       }
 
-      // Prefer the PLANNED duration for the block end (the table's Duration cell
-      // is what the user edits; a stale stored endTime must not win). Fall back
-      // to an explicit endTime only when there's no duration.
-      const end = item.durationMinutes
-        ? addMinutes(start, item.durationMinutes)
-        : (hhmm(item.endTime) ?? null);
+      // Build absolute UTC INSTANTS so block geometry is tz-correct on the home-tz
+      // grid. startTime is wall-clock in the item's ORIGIN tz; the block end is
+      // depart + ELAPSED duration (the planned Duration cell is the source of
+      // truth), falling back to a stored endTime (in the DESTINATION tz) when
+      // there's no duration. Using duration makes a red-eye roll past midnight.
+      const originTz = itemOriginTz(item, homeTz);
+      const departInstant = localToInstant(item.date!, start, originTz);
+      let endInstant: DateTime | null = null;
+      if (item.durationMinutes) {
+        endInstant = departInstant.plus({ minutes: item.durationMinutes });
+      } else {
+        const end = hhmm(item.endTime);
+        if (end) endInstant = localToInstant(item.date!, end, itemLocalTz(item, homeTz));
+      }
 
       // Timed events render as a light-tint block + solid left color band (drawn
       // in eventContent/CSS), so the FC block itself is transparent. The day
-      // color travels in extendedProps.
+      // color + the tz-aware local label travel in extendedProps.
       return {
         id: item.id,
         title: item.title,
-        start: `${item.date!}T${start}:00`,
-        end: end ? `${item.date!}T${end}:00` : undefined,
+        start: departInstant.toISO() ?? `${item.date!}T${start}:00`,
+        end: endInstant?.toISO() ?? undefined,
         backgroundColor: "transparent",
         borderColor: "transparent",
         editable: !booked,
-        extendedProps: { itemId: item.id, color },
+        extendedProps: {
+          itemId: item.id,
+          color,
+          timeLabel: formatItemTimeLabel(item, homeTz),
+        },
       } satisfies EventInput;
     });
-  }, [dated, dayColors]);
+  }, [dated, dayColors, homeTz]);
 
   function persist(itemId: string, data: Record<string, unknown>) {
     // A drag/resize is a deliberate human edit → default user_provided source.
@@ -121,16 +144,25 @@ export function CalendarView({
     const itemId = arg.event.extendedProps.itemId as string;
     const s = arg.event.start;
     if (!s) return;
+    // FC Dates are absolute instants; convert back through the relevant tz to get
+    // the item's local wall-clock (not the browser's, which may differ from the
+    // grid tz). Start lands in the item's ORIGIN tz; end (for a resize) in its
+    // DESTINATION tz. Duration comes from the instant delta (already elapsed).
+    const item = items.find((i) => i.id === itemId);
+    const originTz = item ? itemOriginTz(item, homeTz) : gridTz;
+    const destTz = item ? itemLocalTz(item, homeTz) : gridTz;
+    const startLocal = instantToLocal(DateTime.fromJSDate(s), originTz);
+
     if (arg.event.allDay) {
       // Dropped into the all-day lane → unset the time, keep the day.
-      persist(itemId, { date: fmtDate(s), startTime: null, endTime: null });
+      persist(itemId, { date: startLocal.date, startTime: null, endTime: null });
       return;
     }
     const e = arg.event.end;
     persist(itemId, {
-      date: fmtDate(s),
-      startTime: fmtTime(s),
-      endTime: e ? fmtTime(e) : null,
+      date: startLocal.date,
+      startTime: startLocal.hhmm,
+      endTime: e ? instantToLocal(DateTime.fromJSDate(e), destTz).hhmm : null,
       durationMinutes: e ? minutesBetween(s, e) : null,
     });
   }
@@ -159,7 +191,8 @@ export function CalendarView({
   return (
     <div className="waypoint-calendar">
       <FullCalendar
-        plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+        plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin, luxon3Plugin]}
+        timeZone={gridTz}
         initialView="timeGridWeek"
         initialDate={trip.startDate ?? undefined}
         headerToolbar={{
@@ -228,14 +261,18 @@ function eventTitleNode(title: string) {
 function renderEventContent(arg: EventContentArg) {
   const { event, timeText, view } = arg;
   const color = (event.extendedProps.color as string) || "#6b7280";
+  // Local tz-aware label (null for plain items in the home tz → fall back to FC's
+  // grid-tz timeText so the common single-tz case is unchanged).
+  const timeLabel = (event.extendedProps.timeLabel as string | null) ?? null;
   // Month view: Apple-style row — a left color band (= trip day) + title + muted
   // time. (Timegrid uses tinted blocks; month is a compact list.)
   if (view.type === "dayGridMonth" && !event.allDay) {
+    const label = timeLabel ?? timeText;
     return (
       <div className="wp-evm">
         <span className="wp-evm-bar" style={{ backgroundColor: color }} />
         <span className="wp-evm-title">{eventTitleNode(event.title)}</span>
-        {timeText && <span className="wp-evm-time">{timeText}</span>}
+        {label && <span className="wp-evm-time">{label}</span>}
       </div>
     );
   }
@@ -249,21 +286,21 @@ function renderEventContent(arg: EventContentArg) {
   const lines = short ? 1 : Math.max(1, Math.round(durMin / 30));
   // Title only; the tint + left band live on the event BLOCK (see CSS), so this
   // inner element just line-clamps the text without its own height (which would
-  // re-introduce mid-line clipping).
+  // re-introduce mid-line clipping). A tz-aware label (cross-tz movement or a
+  // non-home-tz stop) shows on its own muted line when the block has room.
   return (
     <div
       className={short ? "wp-ev" : "wp-ev wp-ev-timed"}
       style={{ "--wp-lines": lines } as CSSProperties}
     >
       {eventTitleNode(event.title)}
+      {timeLabel && !short && (
+        <span
+          style={{ display: "block", fontSize: "0.85em", opacity: 0.7 }}
+        >
+          {timeLabel}
+        </span>
+      )}
     </div>
   );
-}
-
-function addMinutes(hhmmStr: string, mins: number): string {
-  const [h, m] = hhmmStr.split(":").map(Number);
-  const total = Math.min(h * 60 + m + mins, 23 * 60 + 59);
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(
-    total % 60
-  ).padStart(2, "0")}`;
 }

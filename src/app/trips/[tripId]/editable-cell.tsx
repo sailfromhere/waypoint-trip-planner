@@ -37,6 +37,9 @@ interface EditableCellProps {
   // textarea with overflow:hidden swallows the wheel and won't scroll the
   // ancestor). Title leaves this empty → grows unbounded.
   multilineMaxClass?: string;
+  // Optional read-view-only decoration shown AFTER the value (e.g. a tz badge on
+  // the Start cell). Never rendered in the editor, so it can't disturb editing.
+  adornment?: React.ReactNode;
 }
 
 // Postgres `time` comes back as "HH:MM:SS". A native <input type="time"> with no
@@ -66,6 +69,7 @@ export function EditableCell({
   className = "",
   multiline = false,
   multilineMaxClass = "",
+  adornment,
 }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -235,9 +239,10 @@ export function EditableCell({
           e.stopPropagation();
           startEditing();
         }}
-        className={`${base} flex items-center ${className}`}
+        className={`${base} flex items-center gap-1 ${className}`}
       >
-        {display || placeholder}
+        <span className="truncate">{display || placeholder}</span>
+        {adornment}
       </div>
     );
   }

@@ -68,6 +68,8 @@ export function useCreateItem(tripId: string) {
         destinationName: null,
         destinationLat: null,
         destinationLng: null,
+        originTimezone: null,
+        destinationTimezone: null,
         category: "activity",
         title: "",
         notes: null,

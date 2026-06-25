@@ -64,6 +64,10 @@ export const trips = pgTable("trips", {
   status: text("status", { enum: tripStatus }).notNull().default("dreaming"),
   budgetCents: integer("budget_cents"),
   currency: text("currency").notNull().default("USD"),
+  // IANA timezone (e.g. "America/Los_Angeles") used as the calendar display axis
+  // and the fallback tz for items whose coords haven't resolved a tz yet. Derived
+  // lazily from the first geocoded item; nullable → falls back to browser tz.
+  homeTimezone: text("home_timezone"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -96,6 +100,16 @@ export const itineraryItems = pgTable("itinerary_items", {
   destinationName: text("destination_name"),
   destinationLat: real("destination_lat"),
   destinationLng: real("destination_lng"),
+
+  // IANA timezones derived offline (tz-lookup) from the endpoint coords. A pure
+  // machine-derived CACHE keyed off the coords — deliberately OUTSIDE the
+  // provenance/sacred-data system (like routeGeometry). Recomputed when an
+  // endpoint moves. `startTime` is wall-clock in originTimezone, `endTime` is
+  // wall-clock in destinationTimezone; they differ only for cross-tz movement
+  // (flights, long drives). Non-movement items leave originTimezone null and use
+  // destinationTimezone as their single local tz.
+  originTimezone: text("origin_timezone"),
+  destinationTimezone: text("destination_timezone"),
 
   category: text("category", { enum: itemCategory })
     .notNull()

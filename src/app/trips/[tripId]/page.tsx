@@ -321,6 +321,7 @@ export default function TripPage({
             onItemSelect={handleItemSelect}
             dayWarnings={dayWarnings}
             drives={routes?.drives}
+            homeTimezone={trip.homeTimezone}
             onLocationEdited={handleLocationEdited}
           />
         </div>
@@ -353,6 +354,7 @@ export default function TripPage({
                     drives={routes?.drives ?? []}
                     selectedItemId={selectedItemId}
                     onItemSelect={handleMapItemSelect}
+                    homeTimezone={trip.homeTimezone}
                   />
                 </Suspense>
               </div>
