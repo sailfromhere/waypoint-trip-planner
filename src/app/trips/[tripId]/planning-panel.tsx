@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { cardEnterExit, staggerChildren, DURATION, EASE } from "@/lib/motion";
 import {
   useGeneratePlan,
   useRefinePlan,
@@ -323,8 +325,14 @@ export function PlanningPanel({
           )}
 
           {/* Proposed diffs */}
+          <AnimatePresence>
           {active && actions.length > 0 && (
-            <div className="mt-4">
+            <motion.div
+              className="mt-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, y: -6, transition: { duration: DURATION.fast, ease: EASE.exit } }}
+            >
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                   Proposed changes ({selected.size} selected
@@ -357,7 +365,12 @@ export function PlanningPanel({
                 )}
               </div>
 
-              <div className="space-y-1.5 max-h-[28rem] overflow-y-auto">
+              <motion.div
+                className="space-y-1.5 max-h-[28rem] overflow-y-auto"
+                variants={staggerChildren}
+                initial="hidden"
+                animate="visible"
+              >
                 {actions.map((action, index) => (
                   <ActionCard
                     key={index}
@@ -366,7 +379,7 @@ export function PlanningPanel({
                     onToggle={() => toggle(index)}
                   />
                 ))}
-              </div>
+              </motion.div>
 
               {/* Refine (conversational) */}
               <form onSubmit={handleRefine} className="flex gap-2 items-end mt-3">
@@ -410,8 +423,9 @@ export function PlanningPanel({
                   </span>
                 )}
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
 
           {/* Empty result */}
           {active && actions.length === 0 && (
@@ -504,7 +518,8 @@ function ActionCard({
         : [];
 
   return (
-    <label
+    <motion.label
+      variants={cardEnterExit}
       className={`flex items-start gap-2.5 rounded-md border px-3 py-2 transition-colors ${
         blocked
           ? "border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-900/10 cursor-not-allowed"
@@ -539,7 +554,7 @@ function ActionCard({
           </p>
         )}
       </div>
-    </label>
+    </motion.label>
   );
 }
 

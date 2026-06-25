@@ -1,8 +1,10 @@
 "use client";
 
 import { use, useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { panelExpand, DURATION, EASE } from "@/lib/motion";
 import { useTrip, useUpdateTrip, useDeleteTrip } from "@/lib/hooks/use-trips";
 import { useItineraryItems, useUpdateItem } from "@/lib/hooks/use-itinerary";
 import { useRoutes, useGeocode } from "@/lib/hooks/use-routes";
@@ -288,31 +290,45 @@ export default function TripPage({
               }`}
             >
               <span className="flex items-center gap-2">
-                <span className="text-zinc-400 text-xs">
-                  {calendarOpen ? "▼" : "▶"}
-                </span>
+                <motion.span
+                  className="text-zinc-400 text-xs inline-block"
+                  animate={{ rotate: calendarOpen ? 90 : 0 }}
+                  transition={{ duration: DURATION.fast, ease: EASE.standard }}
+                >
+                  ▶
+                </motion.span>
                 Calendar
               </span>
             </button>
-            {calendarOpen && (
-              <div className="border-t border-zinc-200 dark:border-zinc-800 p-3">
-                <Suspense
-                  fallback={
-                    <div className="py-12 text-center text-sm text-zinc-400">
-                      Loading calendar...
-                    </div>
-                  }
+            <AnimatePresence initial={false}>
+              {calendarOpen && (
+                <motion.div
+                  className="overflow-hidden"
+                  variants={panelExpand}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
                 >
-                  <CalendarView
-                    tripId={tripId}
-                    items={items ?? []}
-                    trip={trip}
-                    selectedItemId={selectedItemId}
-                    onItemSelect={handleItemSelect}
-                  />
-                </Suspense>
-              </div>
-            )}
+                  <div className="border-t border-zinc-200 dark:border-zinc-800 p-3">
+                    <Suspense
+                      fallback={
+                        <div className="py-12 text-center text-sm text-zinc-400">
+                          Loading calendar...
+                        </div>
+                      }
+                    >
+                      <CalendarView
+                        tripId={tripId}
+                        items={items ?? []}
+                        trip={trip}
+                        selectedItemId={selectedItemId}
+                        onItemSelect={handleItemSelect}
+                      />
+                    </Suspense>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <ItineraryTable
@@ -393,7 +409,18 @@ export default function TripPage({
                 ))}
               </div>
               <div className="flex-1 min-h-0 bg-white dark:bg-zinc-900">
-                {RIGHT_PANEL_TABS.find((t) => t.key === activeRightTab)?.content(tripId)}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeRightTab}
+                    className="h-full min-h-0"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: DURATION.fast, ease: EASE.standard }}
+                  >
+                    {RIGHT_PANEL_TABS.find((t) => t.key === activeRightTab)?.content(tripId)}
+                  </motion.div>
+                </AnimatePresence>
               </div>
             </div>
           </div>

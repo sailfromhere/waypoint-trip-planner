@@ -149,6 +149,7 @@ function styleLabel(el: HTMLDivElement): void {
 // place-name label underneath (collision-managed by applyLabelCollision).
 function createPointElement(p: PointProps): { el: HTMLDivElement; labelEl: HTMLDivElement } {
   const el = document.createElement("div");
+  el.classList.add("marker-pop"); // opacity fade-in on creation (see globals.css)
   const s = MARKER_SIZE;
   // NOTE: do NOT set `position` here — MapLibre's `.maplibregl-marker` class sets
   // `position: absolute` to place the marker, and an inline `position: relative`
@@ -191,6 +192,7 @@ function createPointElement(p: PointProps): { el: HTMLDivElement; labelEl: HTMLD
 function createClusterElement(count: number, label: string): HTMLDivElement {
   const s = Math.round(Math.min(42, 24 + count * 1.6));
   const el = document.createElement("div");
+  el.classList.add("marker-pop"); // opacity fade-in on creation (see globals.css)
   // No inline `position` — see createPointElement (MapLibre needs absolute).
   el.style.cssText = `
     width: ${s}px; height: ${s}px; border-radius: 50%;
@@ -696,6 +698,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
           3 // 3px lanes — tight parallels, small line-offset overshoot.
         );
 
+        const newRouteIds: string[] = [];
         for (const { item } of driveGeoms) {
           const segments = segsByItem.get(item.id);
           if (!segments || segments.length === 0) continue;
@@ -726,7 +729,10 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
               // zoom, only modestly thicker up close. Shared constant so the hover
               // handler can restore it exactly.
               "line-width": ROUTE_BASE_WIDTH,
-              "line-opacity": ROUTE_BASE_OPACITY,
+              // Start transparent; ramped to ROUTE_BASE_OPACITY on the next frame
+              // (MapLibre transitions paint changes by default) so routes fade in
+              // instead of snapping. See the rAF ramp after this loop.
+              "line-opacity": 0,
               // Per-segment lateral offset: 0 on unique stretches, fanned where
               // shared with another day. line-offset is data-driven in MapLibre.
               "line-offset": ["get", "offset"],
@@ -751,9 +757,22 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
             },
           });
           hitLayerIds.current.push(hitId);
+          newRouteIds.push(sourceId);
+        }
+
+        // Fade the freshly-added routes in: ramp opacity 0 → base on the next
+        // frame so MapLibre's default paint transition animates it. Guard each
+        // setPaintProperty in case the layer was torn down before the frame.
+        if (newRouteIds.length > 0) {
+          requestAnimationFrame(() => {
+            for (const id of newRouteIds) {
+              if (map.getLayer(id)) {
+                map.setPaintProperty(id, "line-opacity", ROUTE_BASE_OPACITY);
+              }
+            }
+          });
         }
       }
-
     };
 
     // mapReady fires on the map's 'load' event, so the style is ready here —

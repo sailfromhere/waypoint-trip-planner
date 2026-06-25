@@ -40,6 +40,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { AnimatePresence, motion } from "framer-motion";
+import { rowEnterExit } from "@/lib/motion";
 import type { ItineraryItem, ItineraryItemRow } from "@/db/types";
 import {
   useItineraryItems,
@@ -353,10 +355,17 @@ const SortableRow = memo(function SortableRow({
   const { onPointerDown: dndPointerDown, ...otherListeners } = ls;
 
   return (
-    <tr
+    <motion.tr
       ref={setNodeRef}
       style={style}
       id={`item-${item.id}`}
+      // Opacity-only enter/exit (see rowEnterExit). NO `layout`/`y`: the inline
+      // `style.transform` above belongs to dnd-kit's drag-shuffle and framer must
+      // not take ownership of transform.
+      variants={rowEnterExit}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
       {...attributes}
       {...otherListeners}
       onPointerDown={(e) => {
@@ -401,7 +410,7 @@ const SortableRow = memo(function SortableRow({
           {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
       ))}
-    </tr>
+    </motion.tr>
   );
 });
 
@@ -818,19 +827,25 @@ function DayGroupTable({
               items={itemIds}
               strategy={verticalListSortingStrategy}
             >
-              {table.getRowModel().rows.map((row) => (
-                <SortableRow
-                  // Key off the stable client `_key` (not the item id) so the
-                  // row stays mounted when an optimistic create's temp id is
-                  // swapped for the real server id — otherwise the row remounts
-                  // and an in-progress title/location edit is lost. dnd/server
-                  // ops keep using the real id (getRowId / useSortable below).
-                  key={(row.original as ItineraryItemRow)._key ?? row.original.id}
-                  row={row}
-                  selected={selectedItemId === row.original.id}
-                  onSelect={onItemSelect}
-                />
-              ))}
+              {/* initial={false} → existing rows don't fade on first load; only
+                  newly added rows animate in and deleted rows fade out. Exit is
+                  propagated to the memoized SortableRow's motion.tr via framer's
+                  PresenceContext. */}
+              <AnimatePresence initial={false}>
+                {table.getRowModel().rows.map((row) => (
+                  <SortableRow
+                    // Key off the stable client `_key` (not the item id) so the
+                    // row stays mounted when an optimistic create's temp id is
+                    // swapped for the real server id — otherwise the row remounts
+                    // and an in-progress title/location edit is lost. dnd/server
+                    // ops keep using the real id (getRowId / useSortable below).
+                    key={(row.original as ItineraryItemRow)._key ?? row.original.id}
+                    row={row}
+                    selected={selectedItemId === row.original.id}
+                    onSelect={onItemSelect}
+                  />
+                ))}
+              </AnimatePresence>
             </SortableContext>
           </tbody>
         </table>

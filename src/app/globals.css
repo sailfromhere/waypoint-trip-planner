@@ -42,6 +42,57 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ── Motion vocabulary (Phase 4.5) ────────────────────────────────────────────
+   One shared set of duration + easing tokens for the whole app. The CSS layer
+   (keyframes/utilities below) and the framer-motion layer (`src/lib/motion.ts`)
+   are deliberately keyed to the SAME numbers — keep them in sync. Reduced-motion
+   is honored two ways: the @media block below (CSS) and <MotionConfig
+   reducedMotion="user"> in providers.tsx (framer). */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  /* standard = symmetric ease for moves; entrance = decelerate; exit = accelerate */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-entrance: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-slide-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in var(--motion-base) var(--ease-entrance) both;
+}
+.animate-fade-slide-up {
+  animation: fade-slide-up var(--motion-base) var(--ease-entrance) both;
+}
+/* Map marker fade-in (see trip-map.tsx). OPACITY ONLY — never transform:
+   MapLibre positions the marker element via inline `transform`, and a CSS
+   transform animation (esp. with `both` fill) would override it and strand the
+   marker at the map origin. */
+.marker-pop {
+  animation: fade-in var(--motion-slow) var(--ease-entrance) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+  .animate-fade-in,
+  .animate-fade-slide-up,
+  .marker-pop {
+    animation: none;
+  }
+}
+
 /* ── Calendar (FullCalendar) — scale & theme to match the app ──────────────────
    FullCalendar's defaults are large and blue; the app is small and zinc-neutral.
    IMPORTANT: FC injects its stylesheet into <head> at RUNTIME, after this file,
