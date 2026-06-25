@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Source-of-truth documents:
 - `Waypoint_PRD_v1.md` — the product vision.
-- `IMPROVEMENTS.md` — the engineering plan, phase statuses, and open questions. **Read this before writing any code** and keep phase statuses updated as work lands.
+- `IMPROVEMENTS.md` — the **active** engineering backlog (open items) + living reference (stack, keystones, roadmap). **Read this before writing any code** and keep statuses updated as work lands. When an item is finished, MOVE its full entry to `IMPROVEMENTS_DONE.md` and leave a one-line stub in the "Closed" index at the bottom (keeps the active file lean; never summarize-away rationale).
+- `IMPROVEMENTS_DONE.md` — verbatim archive of completed/decided/dropped items. The "Closed" index in `IMPROVEMENTS.md` points here; grep it for full detail.
 - `TODO.md` — real-world setup the user must do (API keys, accounts). Things only the human can do go here; project work goes in `IMPROVEMENTS.md`.
 
 ## Commands

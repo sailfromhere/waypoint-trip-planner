@@ -208,7 +208,7 @@ function useColumns(
           cell: ({ row }) => (
             <button
               onClick={() => onDelete(row.original.id)}
-              className="opacity-0 group-hover/row:opacity-100 text-zinc-400 hover:text-red-500 text-xs transition-opacity px-1"
+              className="opacity-0 group-hover/row:opacity-100 text-zinc-400 hover:text-red-500 text-xs px-1"
               title="Delete item"
             >
               ✕

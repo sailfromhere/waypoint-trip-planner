@@ -14,6 +14,7 @@ import {
   displayTitle,
   formatDistanceMeters,
   formatDurationSeconds,
+  formatItineraryDate,
 } from "@/lib/format";
 
 // Drive-route line widths, shared by the draw effect and the hover-highlight
@@ -930,60 +931,87 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     // Build the popup from DOM nodes (NOT setHTML): every user-entered value
     // (title, origin/destination names, date) is assigned via textContent, so
     // markup in a field can never be parsed as HTML — XSS is structurally
-    // impossible here, no escaping to remember on each interpolation.
+    // impossible here, no escaping to remember on each interpolation. The card's
+    // look lives in .waypoint-popup CSS (globals.css); --day drives the left
+    // stripe + pill tint and is set inline from this day's marker color.
     const root = document.createElement("div");
-    root.style.cssText = "font-size:13px;max-width:220px";
+    root.className = "wp-pop";
+    root.style.setProperty("--day", getDayColor(item.date));
 
-    // Title — muted italic "Untitled" placeholder when empty, else bold.
-    const titleEl = document.createElement(isUntitled(item.title) ? "em" : "strong");
-    if (isUntitled(item.title)) {
-      titleEl.style.color = "#9ca3af";
-      titleEl.textContent = UNTITLED_LABEL;
-    } else {
-      titleEl.textContent = item.title;
-    }
-    root.appendChild(titleEl);
+    // Top row: title (muted "Untitled" when empty) + custom close button.
+    const top = document.createElement("div");
+    top.className = "wp-top";
 
-    if (subtitle) {
-      const sub = document.createElement("span");
-      sub.style.color = "#666";
-      sub.textContent = subtitle;
-      root.appendChild(document.createElement("br"));
-      root.appendChild(sub);
-    }
+    const titleEl = document.createElement(isUntitled(item.title) ? "em" : "span");
+    titleEl.className = isUntitled(item.title) ? "wp-title wp-title-empty" : "wp-title";
+    titleEl.textContent = isUntitled(item.title) ? UNTITLED_LABEL : item.title;
+    top.appendChild(titleEl);
+
+    // Custom close button — clearing the selection (not just removing the popup)
+    // is what fixes the reopen bug: MapLibre's default X left selectedItemId set,
+    // so re-clicking the SAME marker was a no-op (no null→id transition to re-run
+    // this effect). onItemSelect(null) restores that transition.
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "wp-close";
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.textContent = "✕";
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onSelectRef.current(null);
+    });
+    top.appendChild(closeBtn);
+    root.appendChild(top);
+
+    // Badges row: category pill (always) + friendly date (when present).
+    const badges = document.createElement("div");
+    badges.className = "wp-badges";
+    const pill = document.createElement("span");
+    pill.className = "wp-pill";
+    pill.textContent = item.category;
+    badges.appendChild(pill);
     if (item.date) {
       const dateEl = document.createElement("span");
-      dateEl.style.color = "#888";
-      dateEl.textContent = item.date;
-      root.appendChild(document.createElement("br"));
-      root.appendChild(dateEl);
+      dateEl.className = "wp-date";
+      dateEl.textContent = formatItineraryDate(item.date);
+      badges.appendChild(dateEl);
     }
+    root.appendChild(badges);
 
+    // Meta: place name + (drives only) the routed stats line.
+    const meta = document.createElement("div");
+    meta.className = "wp-meta";
+    if (subtitle) {
+      const place = document.createElement("span");
+      place.className = "wp-place";
+      place.textContent = subtitle;
+      meta.appendChild(place);
+    }
     // Drive stats line — same numbers (and formatters) as the hover tooltip, so
-    // click/touch users (no hover) still get distance + time. Plain text node,
-    // so it stays XSS-safe alongside the rest of this DOM-built popup.
+    // click/touch users (no hover) still get distance + time.
     const driveInfo = item.category === "drive" ? driveInfoRef.current.get(item.id) : undefined;
     if (driveInfo) {
       const statsEl = document.createElement("span");
-      statsEl.style.cssText = "color:#2563eb;font-weight:500";
+      statsEl.className = "wp-stats";
       statsEl.textContent = `${formatDurationSeconds(driveInfo.durationSeconds)} · ${formatDistanceMeters(
         driveInfo.distanceMeters
       )}`;
-      root.appendChild(document.createElement("br"));
-      root.appendChild(statsEl);
+      meta.appendChild(statsEl);
     }
+    if (meta.childElementCount > 0) root.appendChild(meta);
 
-    // focusAfterOpen:false — MapLibre otherwise moves focus to the popup's close
-    // button when it opens (its default). This effect re-runs on every `items`
-    // change, so editing a field on the SELECTED, located row re-opens the popup
-    // and would yank focus out of the cell you're typing in (e.g. the Category
-    // <select> snapping shut right after you picked a location). The popup still
-    // shows; it just no longer steals focus.
+    // focusAfterOpen:false — MapLibre otherwise moves focus to the popup when it
+    // opens (its default). This effect re-runs on every `items` change, so
+    // editing a field on the SELECTED, located row re-opens the popup and would
+    // yank focus out of the cell you're typing in (e.g. the Category <select>
+    // snapping shut right after you picked a location). closeButton:false — we
+    // render our own (see the reopen-bug note above).
     const popup = new maplibregl.Popup({
       offset: 20,
       closeOnClick: true,
-      closeButton: true,
+      closeButton: false,
       focusAfterOpen: false,
+      className: "waypoint-popup",
     })
       .setLngLat(anchor)
       .setDOMContent(root)
@@ -993,7 +1021,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect }: TripMap
     popup.on("close", () => {
       if (activePopupRef.current === popup) activePopupRef.current = null;
     });
-  }, [selectedItemId, items, mapReady, applyLabelCollision]);
+  }, [selectedItemId, items, mapReady, applyLabelCollision, getDayColor]);
 
   const presentCategories = [...new Set(items.map((i) => i.category))];
   const hasDrives = presentCategories.includes("drive");

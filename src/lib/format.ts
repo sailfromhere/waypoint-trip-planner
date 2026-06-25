@@ -15,6 +15,19 @@ export function displayTitle(title: string | null | undefined): string {
   return isUntitled(title) ? UNTITLED_LABEL : (title as string);
 }
 
+/** Friendly itinerary date from an ISO `YYYY-MM-DD` string, e.g. "Mon, Jul 12".
+ * Parsed timezone-SAFELY: we split the parts and build a LOCAL `Date(y, m-1, d)`
+ * — `new Date("2026-07-12")` parses as UTC midnight and renders the previous day
+ * in negative-offset zones. Falls back to the raw string if it isn't ISO-shaped. */
+export function formatItineraryDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
 /** Human-readable duration from a count of MINUTES, e.g. "2h 15m", "45m".
  * Centralizes the logic that was duplicated in planning-panel.tsx. */
 export function formatDurationMinutes(min: number): string {

@@ -227,3 +227,35 @@ test("[#6] clicking empty map deselects the table row", async ({ page }) => {
   await page.locator(".maplibregl-canvas").click({ position: { x: 8, y: 8 } });
   await expect(page.locator("tr.bg-blue-50")).toHaveCount(0);
 });
+
+test("[reopen] closing a marker popup with ✕ lets the same marker reopen it", async ({
+  page,
+}) => {
+  await page.goto(`/trips/${tripId}`);
+  await expect(page.locator(".maplibregl-marker").first()).toBeVisible();
+
+  // Split the clustered day-1 stops into individual point markers.
+  await page.evaluate(() => {
+    const m = (
+      window as unknown as {
+        __waypointMap?: { setCenter(c: [number, number]): void; setZoom(z: number): void };
+      }
+    ).__waypointMap;
+    m?.setCenter([-110.95, 44.56]);
+    m?.setZoom(9);
+  });
+  const point = page.locator(".maplibregl-marker:has(.waypoint-icon)").first();
+  await expect(point).toBeVisible();
+
+  // Open → close via the custom ✕ → REOPEN the SAME marker. Pre-fix this last
+  // step was a no-op: ✕ left selectedItemId set, so re-clicking the same marker
+  // produced no null→id transition and the popup never came back.
+  await point.click();
+  await expect(page.locator(".maplibregl-popup-content")).toBeVisible();
+
+  await page.locator(".waypoint-popup .wp-close").click();
+  await expect(page.locator(".maplibregl-popup-content")).toHaveCount(0);
+
+  await point.click();
+  await expect(page.locator(".maplibregl-popup-content")).toBeVisible();
+});
