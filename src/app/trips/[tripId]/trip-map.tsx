@@ -71,13 +71,42 @@ type HoverTip =
   | ({ kind: "route"; x: number; y: number } & DriveHoverInfo)
   | { kind: "marker"; x: number; y: number; title: string };
 
-function getTileStyle(): string | maplibregl.StyleSpecification {
+// User-selectable basemaps (MapTiler style ids). `streets-v2` is the default —
+// standard road map, fewest labels of the road styles → cleanest under our
+// markers. `basic-v2` is even more minimal; `outdoor-v2` is the warm topo/trail
+// style; `hybrid` is satellite imagery WITH road/place labels (more useful for
+// trip context than bare `satellite`). The picker only renders when a MapTiler
+// key is present (the no-key Carto fallback has a single style).
+const MAP_THEMES: { id: string; label: string }[] = [
+  { id: "streets-v2", label: "Streets" },
+  { id: "basic-v2", label: "Minimal" },
+  { id: "outdoor-v2", label: "Outdoor" },
+  { id: "hybrid", label: "Satellite" },
+];
+const DEFAULT_THEME = "streets-v2";
+const THEME_STORAGE_KEY = "waypoint:mapTheme";
+
+function hasMapTilerKey(): boolean {
+  return !!process.env.NEXT_PUBLIC_MAPTILER_KEY;
+}
+
+// The persisted basemap choice, validated against the known list (falls back to
+// default for stale/unknown values). Guards `window` for SSR.
+function readSavedTheme(): string {
+  if (typeof window === "undefined") return DEFAULT_THEME;
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved && MAP_THEMES.some((t) => t.id === saved)) return saved;
+  } catch {
+    /* localStorage blocked (private mode etc.) — fall through to default */
+  }
+  return DEFAULT_THEME;
+}
+
+function getTileStyle(themeId: string = DEFAULT_THEME): string | maplibregl.StyleSpecification {
   const key = process.env.NEXT_PUBLIC_MAPTILER_KEY;
   if (key) {
-    // "outdoor-v2" — a warm topographic / trail-map style (terrain, contours,
-    // tan/green tones) that fits the field-guide identity better than the cool
-    // grey "streets" basemap.
-    return `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${key}`;
+    return `https://api.maptiler.com/maps/${themeId}/style.json?key=${key}`;
   }
   return {
     version: 8,
@@ -119,6 +148,7 @@ function styleLabel(el: HTMLDivElement): void {
   el.style.cssText = `
     position: absolute; top: calc(100% + 1px); left: 50%;
     transform: translateX(-50%); white-space: nowrap; pointer-events: none;
+    max-width: 150px; overflow: hidden; text-overflow: ellipsis;
     font-size: 11px; line-height: 1.1; font-weight: 600; color: #2b2622;
     text-shadow: 0 0 2px #fbf8f2, 0 0 2px #fbf8f2, 0 0 2px #fbf8f2, 0 0 3px #fbf8f2;
   `;
@@ -191,6 +221,7 @@ function createClusterElement(count: number, label: string): HTMLDivElement {
   el.appendChild(countSpan);
 
   const labelEl = document.createElement("div");
+  labelEl.className = "waypoint-label";
   labelEl.textContent = label;
   styleLabel(labelEl);
   el.appendChild(labelEl);
@@ -298,6 +329,36 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
   // True once a map instance exists; gates marker/route effects so they re-run
   // against a freshly-built map (StrictMode mount→unmount→remount).
   const [mapReady, setMapReady] = useState(false);
+  // Selected basemap. TripMap is lazy-loaded client-side (never SSR'd), so the
+  // initializer can read localStorage directly — no hydration mismatch, and the
+  // map opens on the saved theme with no swap/flash.
+  const [mapTheme, setMapTheme] = useState<string>(readSavedTheme);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  // The theme currently applied to the live map. Lets the swap effect skip the
+  // no-op initial run (map was built from the saved theme) and redundant swaps.
+  const appliedThemeRef = useRef(DEFAULT_THEME);
+  // Latest route-draw closure (set by the route effect each run); the theme-swap
+  // effect calls it to re-add route layers after setStyle wipes them.
+  const drawRoutesRef = useRef<() => void>(() => {});
+
+  const changeTheme = useCallback((id: string) => {
+    setMapTheme(id);
+    setThemeMenuOpen(false);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, id);
+    } catch {
+      /* localStorage blocked — choice just won't persist across reloads */
+    }
+  }, []);
+
+  // Close the theme menu on any click outside it (the control wrapper stops
+  // propagation, so inside-clicks never reach here).
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const close = () => setThemeMenuOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [themeMenuOpen]);
 
   const dates = useMemo(
     () => [...new Set(items.map((i) => i.date).filter(Boolean) as string[])].sort(),
@@ -374,10 +435,12 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     fitAllRef.current = fitAll;
   }, [fitAll]);
 
-  // Hide point labels that would overlap a higher-priority label. Clusters keep
-  // their label; the selected (and hovered) marker's label always wins. Uses
-  // `visibility` (not `display`) so hidden labels still report a layout rect we
-  // can measure on the next pass.
+  // Place each label below its dot, flipping above if that spot collides, and
+  // hiding it only if both collide. Obstacles are every marker dot/cluster bubble
+  // plus already-placed labels, so a label never crosses a marker. Higher-priority
+  // labels (selected first, then itinerary order; clusters win over single points)
+  // claim their spot first. Uses `visibility` (not `display`) so hidden labels
+  // still report a layout rect we can measure on the next pass.
   const applyLabelCollision = useCallback(() => {
     const sel = selectedRef.current;
     const entries = [...pointMetaRef.current.entries()].sort((a, b) => {
@@ -386,18 +449,57 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       if (as !== bs) return as - bs;
       return a[1].priority - b[1].priority;
     });
-    const placed: { l: number; r: number; t: number; b: number }[] = [];
-    for (const [, meta] of entries) {
-      const rect = meta.labelEl.getBoundingClientRect();
-      const box = { l: rect.left, r: rect.right, t: rect.top, b: rect.bottom };
-      const overlaps = placed.some(
-        (q) => !(box.r < q.l || box.l > q.r || box.b < q.t || box.t > q.b)
-      );
-      if (overlaps) {
-        meta.labelEl.style.visibility = "hidden";
+    type Box = { l: number; r: number; t: number; b: number };
+    const intersects = (box: Box, q: Box) =>
+      !(box.r < q.l || box.l > q.r || box.b < q.t || box.t > q.b);
+    // Seed the obstacle list with every marker dot / cluster bubble so a label is
+    // never allowed to sprawl across another marker — not just across another
+    // label. `getBoundingClientRect` on the marker element returns the circle's
+    // own box (the absolutely-positioned label child doesn't expand it).
+    const placed: Box[] = [];
+    const dotByKey = new Map<string, Box>();
+    for (const [key, marker] of markersRef.current) {
+      const r = marker.getElement().getBoundingClientRect();
+      const box = { l: r.left, r: r.right, t: r.top, b: r.bottom };
+      placed.push(box);
+      dotByKey.set(key, box);
+    }
+    for (const [key, meta] of entries) {
+      const el = meta.labelEl;
+      const rect = el.getBoundingClientRect();
+      const dot = dotByKey.get(key);
+      // Candidate boxes for the label below vs. above its own dot. Same width and
+      // horizontal center; only the vertical band differs. (Reflect across the dot
+      // rather than re-measuring after a style flip, so there's no extra reflow.)
+      const below: Box = dot
+        ? { l: rect.left, r: rect.right, t: dot.b + 1, b: dot.b + 1 + rect.height }
+        : { l: rect.left, r: rect.right, t: rect.top, b: rect.bottom };
+      const above: Box = dot
+        ? { l: rect.left, r: rect.right, t: dot.t - 1 - rect.height, b: dot.t - 1 }
+        : below;
+      const setBelow = () => {
+        el.style.top = "calc(100% + 1px)";
+        el.style.bottom = "auto";
+      };
+      const setAbove = () => {
+        el.style.top = "auto";
+        el.style.bottom = "calc(100% + 1px)";
+      };
+      // The selected marker's label always wins (still an obstacle so others yield).
+      if (key === `point-${sel}`) {
+        el.style.visibility = "visible";
+        setBelow();
+        placed.push(below);
+      } else if (!placed.some((q) => intersects(below, q))) {
+        el.style.visibility = "visible";
+        setBelow();
+        placed.push(below);
+      } else if (!placed.some((q) => intersects(above, q))) {
+        el.style.visibility = "visible";
+        setAbove();
+        placed.push(above);
       } else {
-        meta.labelEl.style.visibility = "visible";
-        placed.push(box);
+        el.style.visibility = "hidden";
       }
     }
   }, []);
@@ -446,9 +548,9 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
 
       if (cp.cluster) {
         const key = `cluster-${cp.cluster_id}`;
+        const count = cp.point_count ?? 0;
         activeKeys.add(key);
         if (!markersRef.current.has(key)) {
-          const count = cp.point_count ?? 0;
           const leaves = index.getLeaves(cp.cluster_id!, 1);
           const first = (leaves[0]?.properties as PointProps | undefined)?.label ?? "";
           const label = count > 1 ? `${first} +${count - 1} more` : first;
@@ -469,6 +571,13 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
         } else {
           markersRef.current.get(key)!.setLngLat([lng, lat]);
         }
+        // A cluster's label wins collisions over single points (negative priority
+        // sorts ahead of any item's order); larger clusters beat smaller ones.
+        const clusterLabelEl = markersRef.current
+          .get(key)!
+          .getElement()
+          .querySelector(".waypoint-label") as HTMLDivElement | null;
+        if (clusterLabelEl) pointMetaRef.current.set(key, { labelEl: clusterLabelEl, priority: -count });
       } else {
         const itemId = cp.itemId;
         const key = `point-${itemId}`;
@@ -542,9 +651,13 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
   // Init map
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    // Build directly from the saved theme (not the DEFAULT state value) so the
+    // map opens on the user's last choice with no initial style swap / flash.
+    const initialTheme = readSavedTheme();
+    appliedThemeRef.current = initialTheme;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: getTileStyle(),
+      style: getTileStyle(initialTheme),
       center: [-98.5, 39.8],
       zoom: 3,
     });
@@ -744,6 +857,10 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       }
     };
 
+    // Expose the latest closure so the theme-swap effect can re-add route layers
+    // after setStyle wipes them (it isn't a dep of this effect).
+    drawRoutesRef.current = draw;
+
     // mapReady fires on the map's 'load' event, so the style is ready here —
     // but guard anyway in case a later style swap is mid-flight.
     if (map.isStyleLoaded()) {
@@ -755,6 +872,18 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       };
     }
   }, [drives, items, hiddenCategories, getDayColor, mapReady]);
+
+  // Apply a basemap swap. setStyle tears down all custom sources/layers (our
+  // drive routes + hit targets), so re-add them once the new style finishes
+  // loading. DOM markers are managed outside the style and survive untouched.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    if (appliedThemeRef.current === mapTheme) return; // initial / no-op
+    appliedThemeRef.current = mapTheme;
+    map.once("style.load", () => drawRoutesRef.current());
+    map.setStyle(getTileStyle(mapTheme));
+  }, [mapTheme, mapReady]);
 
   // Lookup table the hover handler reads: itemId → drive stats. Prefer the live
   // routes payload, fall back to the item's cached route columns. Only drives
@@ -1116,6 +1245,79 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
           measures a real height on init. */}
       <div className="relative flex-1 min-h-0 flex">
         <div ref={containerRef} className="flex-1 min-h-0" />
+
+        {/* Basemap (map style) picker — top-left. Only when a MapTiler key is set
+            (the no-key Carto fallback has a single style). stopPropagation on the
+            wrapper so the document outside-click handler (below) doesn't fire for
+            clicks inside the control. */}
+        {hasMapTilerKey() && (
+          <div
+            className="absolute top-2 left-2 z-20"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setThemeMenuOpen((o) => !o)}
+              title="Map style"
+              aria-label="Map style"
+              aria-expanded={themeMenuOpen}
+              className="flex items-center justify-center w-8 h-8 rounded-md bg-white/90 dark:bg-zinc-900/90 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-200 shadow-sm hover:bg-white dark:hover:bg-zinc-800 transition-colors"
+            >
+              {/* Stacked-layers glyph */}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                <polyline points="2 17 12 22 22 17" />
+                <polyline points="2 12 12 17 22 12" />
+              </svg>
+            </button>
+            {themeMenuOpen && (
+              <div className="mt-1 min-w-[8rem] rounded-md bg-white/95 dark:bg-zinc-900/95 border border-zinc-200 dark:border-zinc-700 shadow-md overflow-hidden text-xs">
+                {MAP_THEMES.map((t) => {
+                  const active = t.id === mapTheme;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => changeTheme(t.id)}
+                      className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left transition-colors ${
+                        active
+                          ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium"
+                          : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                      }`}
+                    >
+                      {t.label}
+                      {active && (
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Hover tooltip — route stats at the cursor, or a marker title above the
             dot. pointer-events-none so it never eats the hover it's reacting to
