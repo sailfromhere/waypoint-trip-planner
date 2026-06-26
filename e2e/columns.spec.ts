@@ -56,9 +56,9 @@ test("resizing a column persists across reload", async ({ page }) => {
   await page.goto(`/trips/${tripId}`);
   await page.waitForLoadState("networkidle");
 
-  // Resize the Category column (left side, always visible — Status sits past the
+  // Resize the Start column (left side, always visible — Status sits past the
   // pane's horizontal-scroll edge).
-  const th = page.locator("th", { hasText: "Category" }).first();
+  const th = page.locator("th", { hasText: "Start" }).first();
   const before = (await th.boundingBox())!.width;
   // Title is the sibling we assert must NOT shrink: resizing should GROW the table
   // (push columns right + scroll), never squeeze the others to a fixed width — the
@@ -83,6 +83,6 @@ test("resizing a column persists across reload", async ({ page }) => {
   await page.waitForTimeout(350);
   await page.reload();
   await page.waitForLoadState("networkidle");
-  const after = (await page.locator("th", { hasText: "Category" }).first().boundingBox())!.width;
+  const after = (await page.locator("th", { hasText: "Start" }).first().boundingBox())!.width;
   expect(after).toBeGreaterThan(before + 40);
 });

@@ -14,9 +14,20 @@ import {
   displayTitle,
   formatDistanceMeters,
   formatDurationSeconds,
+  formatDurationMinutes,
   formatItineraryDate,
   formatItemTimeLabel,
 } from "@/lib/format";
+import { DAY_COLORS } from "@/lib/trip-state/day-colors";
+import {
+  categoryIconSvg,
+  categoryLabel,
+  CategoryIcon,
+} from "@/lib/trip-state/categories";
+
+// Ink color for the monochrome category glyph inside a marker. Markers sit on
+// the (always light) basemap, so a fixed ink reads in both app themes.
+const MARKER_ICON_INK = "#2b2622";
 
 // Drive-route line widths, shared by the draw effect and the hover-highlight
 // handler so the "un-highlight" restore matches exactly. Hover is ~1.8× thicker.
@@ -60,46 +71,13 @@ type HoverTip =
   | ({ kind: "route"; x: number; y: number } & DriveHoverInfo)
   | { kind: "marker"; x: number; y: number; title: string };
 
-const DAY_COLORS = [
-  "#3b82f6",
-  "#ef4444",
-  "#10b981",
-  "#f59e0b",
-  "#8b5cf6",
-  "#ec4899",
-  "#06b6d4",
-  "#f97316",
-  "#14b8a6",
-  "#6366f1",
-];
-
-const CATEGORY_META: Record<string, { icon: string; label: string }> = {
-  drive: { icon: "🚗", label: "Drive" },
-  flight: { icon: "✈️", label: "Flight" },
-  activity: { icon: "📍", label: "Activity" },
-  meal: { icon: "🍽️", label: "Meal" },
-  lodging: { icon: "🛏️", label: "Lodging" },
-  transit: { icon: "🚌", label: "Transit" },
-  rest: { icon: "💤", label: "Rest" },
-  other: { icon: "📌", label: "Other" },
-};
-
-// Per-category icon overrides, persisted per-browser (no schema change).
-const ICON_STORAGE_KEY = "waypoint-category-icons";
-
-function loadIconOverrides(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(ICON_STORAGE_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-
 function getTileStyle(): string | maplibregl.StyleSpecification {
   const key = process.env.NEXT_PUBLIC_MAPTILER_KEY;
   if (key) {
-    return `https://api.maptiler.com/maps/streets-v2/style.json?key=${key}`;
+    // "outdoor-v2" — a warm topographic / trail-map style (terrain, contours,
+    // tan/green tones) that fits the field-guide identity better than the cool
+    // grey "streets" basemap.
+    return `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${key}`;
   }
   return {
     version: 8,
@@ -125,7 +103,7 @@ function getTileStyle(): string | maplibregl.StyleSpecification {
 // Point properties carried through Supercluster onto each leaf feature.
 interface PointProps {
   itemId: string;
-  icon: string;
+  category: string;
   color: string;
   title: string;
   label: string;
@@ -134,14 +112,15 @@ interface PointProps {
 
 const MARKER_SIZE = 22;
 
-// Shared label style — a small white-haloed caption under a marker, legible over
-// any basemap. Used by both point markers and cluster bubbles.
+// Shared label style — a small paper-haloed caption under a marker, legible over
+// any basemap. Used by both point markers and cluster bubbles. Warm ink + paper
+// halo to match the field-guide palette.
 function styleLabel(el: HTMLDivElement): void {
   el.style.cssText = `
     position: absolute; top: calc(100% + 1px); left: 50%;
     transform: translateX(-50%); white-space: nowrap; pointer-events: none;
-    font-size: 11px; line-height: 1.1; font-weight: 600; color: #27272a;
-    text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff;
+    font-size: 11px; line-height: 1.1; font-weight: 600; color: #2b2622;
+    text-shadow: 0 0 2px #fbf8f2, 0 0 2px #fbf8f2, 0 0 2px #fbf8f2, 0 0 3px #fbf8f2;
   `;
 }
 
@@ -157,15 +136,20 @@ function createPointElement(p: PointProps): { el: HTMLDivElement; labelEl: HTMLD
   // absolute marker is already a containing block for the absolute label child.
   el.style.cssText = `
     width: ${s}px; height: ${s}px; border-radius: 50%;
-    background: white; border: 1.5px solid ${p.color};
+    background: #fffdf8; border: 2px solid ${p.color};
     display: flex; align-items: center; justify-content: center;
-    font-size: ${Math.round(s * 0.5)}px; cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    cursor: pointer; box-shadow: 0 2px 5px rgba(20,16,10,0.28);
   `;
 
+  // Monochrome category glyph (DAY owns the ring color; category = the icon).
   const iconSpan = document.createElement("span");
   iconSpan.className = "waypoint-icon";
-  iconSpan.textContent = p.icon;
+  iconSpan.style.cssText = "display:flex;color:" + MARKER_ICON_INK;
+  iconSpan.dataset.category = p.category;
+  iconSpan.innerHTML = categoryIconSvg(p.category, {
+    size: Math.round(s * 0.6),
+    stroke: "currentColor",
+  });
   el.appendChild(iconSpan);
 
   const labelEl = document.createElement("div");
@@ -187,8 +171,9 @@ function createPointElement(p: PointProps): { el: HTMLDivElement; labelEl: HTMLD
   return { el, labelEl };
 }
 
-// A cluster bubble: neutral zinc circle with the member count, plus a label
-// naming one member + "+N more" (matches the Apple-Maps reference).
+// A cluster bubble: warm-ink circle with the member count, plus a label naming
+// one member + "+N more" (matches the Apple-Maps reference). Warm ink + cream
+// border to sit in the field-guide palette (was cool zinc).
 function createClusterElement(count: number, label: string): HTMLDivElement {
   const s = Math.round(Math.min(42, 24 + count * 1.6));
   const el = document.createElement("div");
@@ -196,10 +181,10 @@ function createClusterElement(count: number, label: string): HTMLDivElement {
   // No inline `position` — see createPointElement (MapLibre needs absolute).
   el.style.cssText = `
     width: ${s}px; height: ${s}px; border-radius: 50%;
-    background: #3f3f46; border: 2px solid white; color: white;
+    background: #3d352b; border: 2px solid #fffdf8; color: #fffdf8;
     display: flex; align-items: center; justify-content: center;
     font-size: ${Math.round(s * 0.42)}px; font-weight: 700; cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.35);
+    box-shadow: 0 2px 5px rgba(20,16,10,0.32);
   `;
   const countSpan = document.createElement("span");
   countSpan.textContent = String(count);
@@ -310,31 +295,9 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     selectedRef.current = selectedItemId;
   }, [selectedItemId]);
   const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
-  const [iconOverrides, setIconOverrides] = useState<Record<string, string>>(loadIconOverrides);
-  const [showIconEditor, setShowIconEditor] = useState(false);
   // True once a map instance exists; gates marker/route effects so they re-run
   // against a freshly-built map (StrictMode mount→unmount→remount).
   const [mapReady, setMapReady] = useState(false);
-
-  const getIcon = useCallback(
-    (cat: string) =>
-      iconOverrides[cat] ?? CATEGORY_META[cat]?.icon ?? CATEGORY_META.other.icon,
-    [iconOverrides]
-  );
-
-  const setIconOverride = useCallback((cat: string, emoji: string) => {
-    setIconOverrides((prev) => {
-      const next = { ...prev };
-      if (emoji.trim()) next[cat] = emoji.trim();
-      else delete next[cat];
-      try {
-        localStorage.setItem(ICON_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* ignore quota / private-mode errors */
-      }
-      return next;
-    });
-  }, []);
 
   const dates = useMemo(
     () => [...new Set(items.map((i) => i.date).filter(Boolean) as string[])].sort(),
@@ -365,7 +328,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
         lng: item.destinationLng,
         props: {
           itemId: item.id,
-          icon: getIcon(item.category),
+          category: item.category,
           color: getDayColor(item.date),
           title: item.title,
           label: item.destinationName ?? item.title,
@@ -374,7 +337,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       });
     }
     return points;
-  }, [items, hiddenCategories, getDayColor, getIcon]);
+  }, [items, hiddenCategories, getDayColor]);
 
   // All coordinates worth fitting into view (markers + drive endpoints), then
   // trimmed to the trip's main cluster so a long home→destination leg doesn't
@@ -534,8 +497,14 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
         } else {
           marker.setLngLat([lng, lat]);
           const el = marker.getElement();
-          const iconSpan = el.querySelector(".waypoint-icon");
-          if (iconSpan && iconSpan.textContent !== cp.icon) iconSpan.textContent = cp.icon;
+          const iconSpan = el.querySelector(".waypoint-icon") as HTMLElement | null;
+          if (iconSpan && iconSpan.dataset.category !== cp.category) {
+            iconSpan.dataset.category = cp.category;
+            iconSpan.innerHTML = categoryIconSvg(cp.category, {
+              size: Math.round(MARKER_SIZE * 0.6),
+              stroke: "currentColor",
+            });
+          }
         }
         const labelEl = marker.getElement().querySelector(".waypoint-label") as HTMLDivElement;
         if (labelEl) pointMetaRef.current.set(key, { labelEl, priority: cp.priority });
@@ -960,23 +929,25 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     // impossible here, no escaping to remember on each interpolation. The card's
     // look lives in .waypoint-popup CSS (globals.css); --day drives the left
     // stripe + pill tint and is set inline from this day's marker color.
+    // Layout (matches the field-guide render, top→bottom): category caption
+    // (icon + UPPERCASE) · Fraunces title · "date · time" · accent facts line.
+    // Every user value is set via textContent (XSS-safe); --day drives the stripe.
     const root = document.createElement("div");
     root.className = "wp-pop";
     root.style.setProperty("--day", getDayColor(item.date));
 
-    // Top row: title (muted "Untitled" when empty) + custom close button.
-    const top = document.createElement("div");
-    top.className = "wp-top";
+    // Category caption row (top): monochrome glyph (own constant SVG) + label on
+    // the left, close ✕ on the right (vertically aligned with the caption).
+    const cat = document.createElement("div");
+    cat.className = "wp-cat";
+    const catLabel = document.createElement("span");
+    catLabel.className = "wp-cat-label";
+    catLabel.innerHTML = categoryIconSvg(item.category, { size: 13, stroke: "currentColor" });
+    catLabel.appendChild(document.createTextNode(categoryLabel(item.category)));
+    cat.appendChild(catLabel);
 
-    const titleEl = document.createElement(isUntitled(item.title) ? "em" : "span");
-    titleEl.className = isUntitled(item.title) ? "wp-title wp-title-empty" : "wp-title";
-    titleEl.textContent = isUntitled(item.title) ? UNTITLED_LABEL : item.title;
-    top.appendChild(titleEl);
-
-    // Custom close button — clearing the selection (not just removing the popup)
-    // is what fixes the reopen bug: MapLibre's default X left selectedItemId set,
-    // so re-clicking the SAME marker was a no-op (no null→id transition to re-run
-    // this effect). onItemSelect(null) restores that transition.
+    // Close ✕ — clears the selection (not just the popup) so re-clicking the SAME
+    // marker reopens it (the null→id transition re-runs this effect).
     const closeBtn = document.createElement("button");
     closeBtn.className = "wp-close";
     closeBtn.type = "button";
@@ -986,59 +957,61 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       e.stopPropagation();
       onSelectRef.current(null);
     });
-    top.appendChild(closeBtn);
-    root.appendChild(top);
+    cat.appendChild(closeBtn);
+    root.appendChild(cat);
 
-    // Badges row: category pill (always) + friendly date (when present).
-    const badges = document.createElement("div");
-    badges.className = "wp-badges";
-    const pill = document.createElement("span");
-    pill.className = "wp-pill";
-    pill.textContent = item.category;
-    badges.appendChild(pill);
-    if (item.date) {
-      const dateEl = document.createElement("span");
-      dateEl.className = "wp-date";
-      dateEl.textContent = formatItineraryDate(item.date);
-      badges.appendChild(dateEl);
-    }
-    // Time: tz-aware local label (e.g. "19:00 EST" or "09:00 PST → 17:30 EST"
-    // for a cross-tz flight/drive), falling back to the plain start time when
-    // the item sits in the home tz. textContent only (XSS-safe).
+    // Title (Fraunces; muted "Untitled" when empty).
+    const titleEl = document.createElement(isUntitled(item.title) ? "em" : "div");
+    titleEl.className = isUntitled(item.title) ? "wp-title wp-title-empty" : "wp-title";
+    titleEl.textContent = isUntitled(item.title) ? UNTITLED_LABEL : item.title;
+    root.appendChild(titleEl);
+
+    // When: "date · time". Time is the tz-aware local label (e.g. "19:00 EST" or
+    // "09:00 PST → 17:30 EST" for cross-tz movement), falling back to the plain
+    // start time when the item sits in the home tz.
     const timeLabel =
       formatItemTimeLabel(item, homeTzRef.current) ??
       (item.startTime
         ? /^(\d{1,2}):(\d{2})/.exec(item.startTime.trim())?.[0] ?? null
         : null);
-    if (timeLabel) {
-      const timeEl = document.createElement("span");
-      timeEl.className = "wp-date";
-      timeEl.textContent = timeLabel;
-      badges.appendChild(timeEl);
+    const whenParts: string[] = [];
+    if (item.date) whenParts.push(formatItineraryDate(item.date));
+    if (timeLabel) whenParts.push(timeLabel);
+    if (whenParts.length) {
+      const when = document.createElement("div");
+      when.className = "wp-when";
+      when.textContent = whenParts.join(" · ");
+      root.appendChild(when);
     }
-    root.appendChild(badges);
 
-    // Meta: place name + (drives only) the routed stats line.
-    const meta = document.createElement("div");
-    meta.className = "wp-meta";
-    if (subtitle) {
-      const place = document.createElement("span");
-      place.className = "wp-place";
-      place.textContent = subtitle;
-      meta.appendChild(place);
-    }
-    // Drive stats line — same numbers (and formatters) as the hover tooltip, so
-    // click/touch users (no hover) still get distance + time.
+    // Drives get a muted origin → destination line (the route is the key fact).
     const driveInfo = item.category === "drive" ? driveInfoRef.current.get(item.id) : undefined;
+    if (item.category === "drive" && subtitle) {
+      const route = document.createElement("div");
+      route.className = "wp-when";
+      route.textContent = subtitle;
+      root.appendChild(route);
+    }
+
+    // Accent facts line: drives → "duration · distance" (routed); others →
+    // "duration · place".
+    let statsText = "";
     if (driveInfo) {
-      const statsEl = document.createElement("span");
-      statsEl.className = "wp-stats";
-      statsEl.textContent = `${formatDurationSeconds(driveInfo.durationSeconds)} · ${formatDistanceMeters(
+      statsText = `${formatDurationSeconds(driveInfo.durationSeconds)} · ${formatDistanceMeters(
         driveInfo.distanceMeters
       )}`;
-      meta.appendChild(statsEl);
+    } else {
+      const parts: string[] = [];
+      if (item.durationMinutes) parts.push(formatDurationMinutes(item.durationMinutes));
+      if (item.category !== "drive" && subtitle) parts.push(subtitle);
+      statsText = parts.join(" · ");
     }
-    if (meta.childElementCount > 0) root.appendChild(meta);
+    if (statsText) {
+      const stats = document.createElement("div");
+      stats.className = "wp-stats";
+      stats.textContent = statsText;
+      root.appendChild(stats);
+    }
 
     // focusAfterOpen:false — MapLibre otherwise moves focus to the popup when it
     // opens (its default). This effect re-runs on every `items` change, so
@@ -1051,11 +1024,48 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       closeOnClick: true,
       closeButton: false,
       focusAfterOpen: false,
+      // "none" — the card sizes itself via .wp-pop (width:max-content, max 340px);
+      // MapLibre's default 240px cap would otherwise force-wrap long titles.
+      maxWidth: "none",
       className: "waypoint-popup",
     })
       .setLngLat(anchor)
       .setDOMContent(root)
       .addTo(map);
+
+    // Size the card to its WIDEST WRAPPED LINE. A CSS shrink-wrap (max-content)
+    // sizes to the title's UNWRAPPED width, leaving dead space when a title barely
+    // wraps; and measuring in-place is unreliable (MapLibre's popup container
+    // constrains the layout). So measure in a DETACHED clone at the cap width —
+    // free of MapLibre — then set an explicit border-box width. rAF: after layout,
+    // before paint (no flash). PAD_X must match .wp-pop's left+right padding.
+    requestAnimationFrame(() => {
+      if (!root.isConnected) return;
+      const PAD_X = 17 + 15;
+      const clone = root.cloneNode(true) as HTMLElement;
+      Object.assign(clone.style, {
+        position: "fixed",
+        left: "-9999px",
+        top: "0",
+        boxSizing: "border-box",
+        width: "340px",
+        maxWidth: "340px",
+        minWidth: "0",
+        visibility: "hidden",
+      });
+      document.body.appendChild(clone);
+      let widest = 0;
+      clone.querySelectorAll(".wp-title, .wp-when, .wp-stats").forEach((el) => {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        for (const rect of range.getClientRects()) {
+          if (rect.width > widest) widest = rect.width;
+        }
+      });
+      document.body.removeChild(clone);
+      // +1px guards sub-pixel rounding; min/max-width (CSS) clamp the result.
+      if (widest > 0) root.style.width = `${Math.ceil(widest) + PAD_X + 1}px`;
+    });
 
     activePopupRef.current = popup;
     popup.on("close", () => {
@@ -1077,60 +1087,26 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
 
   return (
     <div className="relative flex flex-col h-full">
-      {/* Controls: fit, icon settings, category filter pills */}
-      <div className="shrink-0 flex flex-wrap items-center gap-1 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <button
-          onClick={() => setShowIconEditor((s) => !s)}
-          className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
-            showIconEditor
-              ? "border-zinc-400 dark:border-zinc-500 bg-zinc-100 dark:bg-zinc-800"
-              : "border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          } text-zinc-700 dark:text-zinc-300`}
-          title="Customize category icons"
-        >
-          ⚙ Icons
-        </button>
-        {presentCategories.length > 1 &&
-          presentCategories.map((cat) => {
-            const label = CATEGORY_META[cat]?.label ?? cat;
+      {/* Controls: category filter pills (icon + label) */}
+      {presentCategories.length > 1 && (
+        <div className="shrink-0 flex flex-wrap items-center gap-1 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+          {presentCategories.map((cat) => {
             const hidden = hiddenCategories.has(cat);
             return (
               <button
                 key={cat}
                 onClick={() => toggleCategory(cat)}
-                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
                   hidden
                     ? "border-zinc-200 dark:border-zinc-700 text-zinc-400 bg-zinc-50 dark:bg-zinc-800"
                     : "border-zinc-300 dark:border-zinc-600 text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-900"
                 }`}
               >
-                {getIcon(cat)} {label}
+                <CategoryIcon category={cat} size={13} />
+                {categoryLabel(cat)}
               </button>
             );
           })}
-      </div>
-
-      {/* Icon editor popover */}
-      {showIconEditor && (
-        <div className="absolute top-12 left-3 z-20 w-60 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 shadow-lg p-2 space-y-1.5">
-          <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 px-1">
-            Type an emoji to change a category icon
-          </div>
-          {presentCategories.map((cat) => (
-            <div key={cat} className="flex items-center gap-2 px-1">
-              <span className="text-base w-6 text-center">{getIcon(cat)}</span>
-              <span className="text-xs text-zinc-600 dark:text-zinc-300 flex-1">
-                {CATEGORY_META[cat]?.label ?? cat}
-              </span>
-              <input
-                value={iconOverrides[cat] ?? ""}
-                onChange={(e) => setIconOverride(cat, e.target.value)}
-                placeholder={CATEGORY_META[cat]?.icon ?? ""}
-                maxLength={4}
-                className="w-12 text-center text-sm bg-transparent border border-zinc-300 dark:border-zinc-600 rounded px-1 py-0.5 outline-none focus:border-zinc-500"
-              />
-            </div>
-          ))}
         </div>
       )}
 

@@ -19,6 +19,7 @@ import { DateTime } from "luxon";
 import type { ItineraryItem } from "@/db/types";
 import { useUpdateItem } from "@/lib/hooks/use-itinerary";
 import { DAY_COLORS, buildDayColorMap } from "@/lib/trip-state/day-colors";
+import { CategoryIcon } from "@/lib/trip-state/categories";
 import { isUntitled, UNTITLED_LABEL, formatItemTimeLabel } from "@/lib/format";
 import {
   localToInstant,
@@ -96,7 +97,7 @@ export function CalendarView({
           backgroundColor: color,
           borderColor: color,
           editable: !booked,
-          extendedProps: { itemId: item.id, color, timeLabel: null },
+          extendedProps: { itemId: item.id, color, timeLabel: null, category: item.category },
         } satisfies EventInput;
       }
 
@@ -130,6 +131,7 @@ export function CalendarView({
           itemId: item.id,
           color,
           timeLabel: formatItemTimeLabel(item, homeTz),
+          category: item.category,
         },
       } satisfies EventInput;
     });
@@ -230,7 +232,7 @@ export function CalendarView({
         height={760}
         eventClassNames={(arg) =>
           arg.event.extendedProps.itemId === selectedItemId
-            ? ["ring-2", "ring-offset-1", "ring-zinc-900", "dark:ring-white"]
+            ? ["ring-2", "ring-offset-1", "ring-[var(--accent)]"]
             : []
         }
       />
@@ -266,11 +268,17 @@ function renderEventContent(arg: EventContentArg) {
   const timeLabel = (event.extendedProps.timeLabel as string | null) ?? null;
   // Month view: Apple-style row — a left color band (= trip day) + title + muted
   // time. (Timegrid uses tinted blocks; month is a compact list.)
+  const category = (event.extendedProps.category as string) || "other";
   if (view.type === "dayGridMonth" && !event.allDay) {
     const label = timeLabel ?? timeText;
     return (
       <div className="wp-evm">
         <span className="wp-evm-bar" style={{ backgroundColor: color }} />
+        <CategoryIcon
+          category={category}
+          size={12}
+          className="wp-evm-icon shrink-0 text-zinc-500 dark:text-zinc-400"
+        />
         <span className="wp-evm-title">{eventTitleNode(event.title)}</span>
         {label && <span className="wp-evm-time">{label}</span>}
       </div>
@@ -293,6 +301,11 @@ function renderEventContent(arg: EventContentArg) {
       className={short ? "wp-ev" : "wp-ev wp-ev-timed"}
       style={{ "--wp-lines": lines } as CSSProperties}
     >
+      {/* Category glyph only when there's room (≥30-min blocks); short blocks are
+          title-only. DAY owns hue (block tint + left band); glyph is monochrome. */}
+      {!short && (
+        <CategoryIcon category={category} size={11} className="wp-ev-icon" />
+      )}
       {eventTitleNode(event.title)}
       {timeLabel && !short && (
         <span

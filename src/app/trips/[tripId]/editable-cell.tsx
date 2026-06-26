@@ -208,7 +208,12 @@ export function EditableCell({
       display = `$${(Number(value) / 100).toFixed(2)}`;
     }
 
-    // h-full makes the whole (tall) cell clickable, not just a thin strip.
+    // h-full makes the whole (tall) cell clickable, not just a thin strip (and it
+    // stretches to the row height set by the title cell's stacked content, so the
+    // whole row stays a click target). Keep min-height modest — the row's airiness
+    // comes from the title+caption stack now, and a tall min-height here would
+    // float the title above its category caption. Put breathing room INSIDE the
+    // child, never as td padding (that makes a dead strip — start-time smoke test).
     const base = `w-full cursor-text text-xs py-1 px-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 h-full min-h-[1.5rem] ${
       !display ? "text-zinc-400" : ""
     }`;

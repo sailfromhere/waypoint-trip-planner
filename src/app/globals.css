@@ -1,22 +1,81 @@
 @import "tailwindcss";
 
+/* ── Cartographic Field Guide palette ──────────────────────────────────────────
+   Warm paper + ink with a trail-amber accent. The whole app leans on Tailwind's
+   zinc ramp + white (bg-white, border-zinc-200, text-zinc-500, dark:bg-zinc-900…),
+   so rather than editing hundreds of classNames we REMAP those tokens to warm
+   equivalents in @theme below — the entire UI shifts to paper at once. The
+   semantic vars (--paper/--ink/--accent…) drive the hand-built surfaces (map
+   popup, legend, calendar) and are available to any component directly. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #fbf8f2;
+  --panel: #fffdf8;
+  --panel-2: #f4efe4;
+  --ink: #2b2622;
+  --ink-strong: #1f1b17;
+  --muted: #837567;
+  --border: #e6ddcd;
+  --border-strong: #d8cbb4;
+  --accent: #b5651d; /* trail amber */
+  --accent-ink: #fffdf8;
+  --accent-pine: #2f5d50;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #181410;
+    --panel: #211c17;
+    --panel-2: #15110d;
+    --ink: #ece4d6;
+    --ink-strong: #fbf7ee;
+    --muted: #a89a86;
+    --border: #322c24;
+    --border-strong: #3d362b;
+    --accent: #d08a3e; /* lifted amber for dark */
+    --accent-ink: #181410;
+    --accent-pine: #5a9684;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  /* CJK companions follow the Latin face in each stack (per-character fallback). */
+  --font-sans: var(--font-geist-sans), "Noto Sans SC", ui-sans-serif, system-ui,
+    sans-serif;
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces), "LXGW WenKai", ui-serif, Georgia, serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Remap Tailwind's neutral ramp (+ white) to warm "field guide" stone so every
+   existing zinc/white utility across the app becomes paper-toned with no
+   per-component edits. White → near-white panel, so `text-white` on the accent
+   and light surfaces still reads light. Light values cover bg-zinc-50…300 +
+   borders; dark values cover the dark:* usages. */
+@theme {
+  --color-white: #fffdf8;
+  --color-zinc-50: #fbf8f2;
+  --color-zinc-100: #f1ebdf;
+  --color-zinc-200: #e6ddcd;
+  --color-zinc-300: #d8cbb4;
+  --color-zinc-400: #a89b89;
+  --color-zinc-500: #837567;
+  --color-zinc-600: #6b5e50;
+  --color-zinc-700: #4e4438;
+  --color-zinc-800: #322c24;
+  --color-zinc-900: #211c17;
+  --color-zinc-950: #15110d;
+}
+
+/* Fraunces display utility for the wordmark, page/trip titles, card/popup
+   titles. Geist still carries all data/UI. "LXGW WenKai" is the Chinese
+   companion (per-character fallback: Latin → Fraunces, CJK → WenKai). */
+.font-display {
+  font-family: var(--font-fraunces), "LXGW WenKai", ui-serif, Georgia, serif;
+  letter-spacing: -0.01em;
 }
 
 /* Light typography pass (#3): use the Geist font that's already loaded (body
@@ -34,8 +93,10 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, sans-serif;
+  /* Geist for Latin; "Noto Sans SC" is the Chinese companion for UI/data text
+     (per-character fallback). Titles use .font-display (Fraunces + WenKai). */
+  font-family: var(--font-geist-sans), "Noto Sans SC", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -80,6 +141,18 @@ body {
   animation: fade-in var(--motion-slow) var(--ease-entrance) both;
 }
 
+/* Loading skeleton — a warm placeholder block that gently pulses. Use with
+   Tailwind sizing utilities, e.g. <div className="skeleton h-4 w-32" />. */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.skeleton {
+  background: color-mix(in srgb, var(--muted) 22%, var(--panel));
+  border-radius: 8px;
+  animation: skeleton-pulse 1.4s var(--ease-standard) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;
@@ -88,7 +161,8 @@ body {
   }
   .animate-fade-in,
   .animate-fade-slide-up,
-  .marker-pop {
+  .marker-pop,
+  .skeleton {
     animation: none;
   }
 }
@@ -100,19 +174,12 @@ body {
    (the leading `.fc`) AND use !important on sizes/colors so these reliably win.
    Day-color event backgrounds are still set per-event in JS. */
 .waypoint-calendar {
-  --fc-border-color: #e4e4e7; /* zinc-200 */
-  --fc-today-bg-color: rgba(59, 130, 246, 0.06);
-  --fc-now-indicator-color: #ef4444;
+  --fc-border-color: var(--border);
+  --fc-today-bg-color: color-mix(in srgb, var(--accent) 9%, transparent);
+  --fc-now-indicator-color: #c0492f; /* warm brick — current-time line */
   /* Opaque (== the panel color). FC also uses this var for the "+more" popover
      surface — leaving it transparent made the popover see-through over the grid. */
-  --fc-page-bg-color: #ffffff;
-}
-@media (prefers-color-scheme: dark) {
-  .waypoint-calendar {
-    --fc-border-color: #27272a; /* zinc-800 */
-    --fc-today-bg-color: rgba(59, 130, 246, 0.1);
-    --fc-page-bg-color: #18181b; /* zinc-900 == panel */
-  }
+  --fc-page-bg-color: var(--panel);
 }
 /* Toolbar: title at trip-title size; tighter gap below */
 .waypoint-calendar .fc .fc-toolbar.fc-header-toolbar {
@@ -128,7 +195,7 @@ body {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
-  color: #71717a !important; /* zinc-500 */
+  color: var(--muted) !important;
   font-size: 0.75rem !important; /* text-xs — tab parity */
   font-weight: 500 !important;
   padding: 0.25rem 0.625rem !important; /* py-1 px-2.5 */
@@ -136,14 +203,14 @@ body {
   text-transform: capitalize;
 }
 .waypoint-calendar .fc .fc-button:hover {
-  background: #fafafa !important; /* zinc-50 */
-  color: #3f3f46 !important; /* zinc-700 */
+  background: var(--panel-2) !important;
+  color: var(--ink-strong) !important;
 }
 .waypoint-calendar .fc .fc-button-primary:not(:disabled).fc-button-active,
 .waypoint-calendar .fc .fc-button-primary:not(:disabled):active {
-  background: #f4f4f5 !important; /* zinc-100 */
-  color: #3f3f46 !important;
-  font-weight: 500 !important;
+  background: var(--panel-2) !important;
+  color: var(--accent) !important;
+  font-weight: 600 !important;
 }
 .waypoint-calendar .fc .fc-button:disabled {
   opacity: 0.4 !important;
@@ -151,27 +218,13 @@ body {
 .waypoint-calendar .fc .fc-button-group {
   gap: 2px;
 }
-@media (prefers-color-scheme: dark) {
-  .waypoint-calendar .fc .fc-button {
-    color: #a1a1aa !important; /* zinc-400 */
-  }
-  .waypoint-calendar .fc .fc-button:hover {
-    background: rgba(39, 39, 42, 0.5) !important;
-    color: #d4d4d8 !important;
-  }
-  .waypoint-calendar .fc .fc-button-primary:not(:disabled).fc-button-active,
-  .waypoint-calendar .fc .fc-button-primary:not(:disabled):active {
-    background: #27272a !important; /* zinc-800 */
-    color: #e4e4e7 !important;
-  }
-}
 /* Day-of-week headers + left-rail time labels + the "all-day" axis label:
    small & muted (the all-day label matches the hour labels, per request). */
 .waypoint-calendar .fc .fc-col-header-cell-cushion,
 .waypoint-calendar .fc .fc-timegrid-slot-label-cushion,
 .waypoint-calendar .fc .fc-timegrid-axis-cushion {
   font-size: 0.7rem !important;
-  color: #71717a !important; /* zinc-500 */
+  color: var(--muted) !important;
   font-weight: 500 !important;
 }
 /* Compact 30-min slot rows (full 00:00–24:00 day without inner scroll). Events
@@ -194,14 +247,9 @@ body {
    side-by-side. The text-clamp lives on the height-less inner .wp-ev. */
 .waypoint-calendar .fc .fc-timegrid-event {
   border: none !important;
-  background: color-mix(in srgb, var(--ev, #6b7280) 15%, #ffffff) !important;
+  background: color-mix(in srgb, var(--ev, #6b7280) 18%, var(--panel)) !important;
   border-left: 3px solid var(--ev, #6b7280) !important;
   border-radius: 3px !important;
-}
-@media (prefers-color-scheme: dark) {
-  .waypoint-calendar .fc .fc-timegrid-event {
-    background: color-mix(in srgb, var(--ev, #6b7280) 26%, #18181b) !important;
-  }
 }
 /* Inner content: title only, clamped to round(min/30) lines. NO explicit height
    (that re-introduced mid-line clipping) — it sits at the block top and the
@@ -212,22 +260,24 @@ body {
   -webkit-line-clamp: var(--wp-lines, 1);
   line-clamp: var(--wp-lines, 1);
   overflow: hidden;
-  color: #18181b;
+  color: var(--ink);
   font-size: 0.75rem; /* text-xs — matches table cells */
   line-height: 1.4;
   font-weight: 500;
   padding: 1px 6px;
   overflow-wrap: anywhere;
 }
-@media (prefers-color-scheme: dark) {
-  .waypoint-calendar .wp-ev {
-    color: #ededed;
-  }
-}
 /* Normal (>=30-min) blocks get a touch of top padding ≈ one line-gap so the
    first line isn't crammed against the top. <30-min and all-day keep tight. */
 .waypoint-calendar .wp-ev-timed {
   padding-top: 0.3rem;
+}
+/* Category glyph inline before a timed event's title (monochrome, muted). */
+.waypoint-calendar .wp-ev-icon {
+  display: inline-block;
+  vertical-align: -1.5px;
+  margin-right: 4px;
+  color: var(--muted);
 }
 /* All-day events: solid filled block, single line, with a little top breathing
    room so the text isn't jammed against the top edge. */
@@ -280,7 +330,7 @@ body {
 }
 .waypoint-calendar .wp-evm-time {
   flex: 0 0 auto;
-  color: #71717a;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 /* Month view: trip-day top color band — a padded, rounded bar inset from the
@@ -297,20 +347,21 @@ body {
   background-position: 4px 3px;
   background-size: calc(100% - 8px) 4px;
 }
-.waypoint-calendar .fc .wp-band-0 .fc-daygrid-day-frame { background-image: linear-gradient(#3b82f6, #3b82f6); }
-.waypoint-calendar .fc .wp-band-1 .fc-daygrid-day-frame { background-image: linear-gradient(#ef4444, #ef4444); }
-.waypoint-calendar .fc .wp-band-2 .fc-daygrid-day-frame { background-image: linear-gradient(#10b981, #10b981); }
-.waypoint-calendar .fc .wp-band-3 .fc-daygrid-day-frame { background-image: linear-gradient(#f59e0b, #f59e0b); }
-.waypoint-calendar .fc .wp-band-4 .fc-daygrid-day-frame { background-image: linear-gradient(#8b5cf6, #8b5cf6); }
-.waypoint-calendar .fc .wp-band-5 .fc-daygrid-day-frame { background-image: linear-gradient(#ec4899, #ec4899); }
-.waypoint-calendar .fc .wp-band-6 .fc-daygrid-day-frame { background-image: linear-gradient(#06b6d4, #06b6d4); }
-.waypoint-calendar .fc .wp-band-7 .fc-daygrid-day-frame { background-image: linear-gradient(#f97316, #f97316); }
-.waypoint-calendar .fc .wp-band-8 .fc-daygrid-day-frame { background-image: linear-gradient(#14b8a6, #14b8a6); }
-.waypoint-calendar .fc .wp-band-9 .fc-daygrid-day-frame { background-image: linear-gradient(#6366f1, #6366f1); }
+/* Day-band colors — keep in sync with DAY_COLORS in day-colors.ts (by index). */
+.waypoint-calendar .fc .wp-band-0 .fc-daygrid-day-frame { background-image: linear-gradient(#C2683C, #C2683C); }
+.waypoint-calendar .fc .wp-band-1 .fc-daygrid-day-frame { background-image: linear-gradient(#BE9A3A, #BE9A3A); }
+.waypoint-calendar .fc .wp-band-2 .fc-daygrid-day-frame { background-image: linear-gradient(#6E8240, #6E8240); }
+.waypoint-calendar .fc .wp-band-3 .fc-daygrid-day-frame { background-image: linear-gradient(#2F7E6E, #2F7E6E); }
+.waypoint-calendar .fc .wp-band-4 .fc-daygrid-day-frame { background-image: linear-gradient(#2E6B7E, #2E6B7E); }
+.waypoint-calendar .fc .wp-band-5 .fc-daygrid-day-frame { background-image: linear-gradient(#4E6E8E, #4E6E8E); }
+.waypoint-calendar .fc .wp-band-6 .fc-daygrid-day-frame { background-image: linear-gradient(#5E5E97, #5E5E97); }
+.waypoint-calendar .fc .wp-band-7 .fc-daygrid-day-frame { background-image: linear-gradient(#8A5A78, #8A5A78); }
+.waypoint-calendar .fc .wp-band-8 .fc-daygrid-day-frame { background-image: linear-gradient(#B05060, #B05060); }
+.waypoint-calendar .fc .wp-band-9 .fc-daygrid-day-frame { background-image: linear-gradient(#A8553E, #A8553E); }
 /* Month view: date number → same size as the Sun/Mon column headers. */
 .waypoint-calendar .fc .fc-daygrid-day-number {
   font-size: 0.7rem !important;
-  color: #71717a;
+  color: var(--muted);
   font-weight: 500;
 }
 /* "+N more" link → same size as the "all-day" / hour labels. Target the base
@@ -319,7 +370,7 @@ body {
 .waypoint-calendar .fc .fc-daygrid-more-link,
 .waypoint-calendar .fc a.fc-more-link {
   font-size: 0.7rem !important;
-  color: #71717a !important;
+  color: var(--muted) !important;
   font-weight: 500 !important;
 }
 /* The "+N more" popover. FC defaults its surface to --fc-page-bg-color, which we
@@ -328,32 +379,19 @@ body {
    it on <body> rather than inside .waypoint-calendar (FC only renders here). */
 .waypoint-calendar .fc .fc-popover,
 .fc-popover {
-  background: #ffffff !important;
-  border: 1px solid #e4e4e7 !important;
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
   border-radius: 0.5rem;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 30px rgba(20, 16, 10, 0.18);
   overflow: hidden;
 }
 .fc-popover .fc-popover-header {
-  background: #f4f4f5 !important;
+  background: var(--panel-2) !important;
   font-size: 0.75rem;
   padding: 4px 8px;
 }
 .fc-popover .fc-popover-body {
-  background: #ffffff !important;
-}
-@media (prefers-color-scheme: dark) {
-  .waypoint-calendar .fc .fc-popover,
-  .fc-popover {
-    background: #18181b !important; /* zinc-900 */
-    border-color: #27272a !important;
-  }
-  .fc-popover .fc-popover-header {
-    background: #27272a !important;
-  }
-  .fc-popover .fc-popover-body {
-    background: #18181b !important;
-  }
+  background: var(--panel) !important;
 }
 
 /* Thin, hover-revealed scrollbars — applied APP-WIDE (every current and future
@@ -369,7 +407,7 @@ body {
 }
 *:hover,
 .thin-scroll:hover {
-  scrollbar-color: rgba(113, 113, 122, 0.5) transparent; /* zinc-500 @ 50% */
+  scrollbar-color: rgba(131, 117, 103, 0.5) transparent; /* warm muted @ 50% */
 }
 /* WebKit/Blink: a bare ::-webkit-scrollbar rule targets every scrollbar. */
 ::-webkit-scrollbar {
@@ -385,7 +423,7 @@ body {
 }
 *:hover::-webkit-scrollbar-thumb,
 .thin-scroll:hover::-webkit-scrollbar-thumb {
-  background: rgba(113, 113, 122, 0.5); /* zinc-500 @ 50% */
+  background: rgba(131, 117, 103, 0.5); /* warm muted @ 50% */
 }
 
 /* ============================================================
@@ -400,105 +438,128 @@ body {
   overflow: hidden;
   padding: 0; /* the .wp-pop card owns its own padding */
   border-radius: 13px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 253, 246, 0.78);
   -webkit-backdrop-filter: blur(14px) saturate(1.3);
   backdrop-filter: blur(14px) saturate(1.3);
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+  border: 1px solid rgba(214, 203, 180, 0.7);
+  box-shadow: 0 12px 34px rgba(40, 30, 20, 0.2);
   font-size: 13px;
-  color: #18181b;
+  color: var(--ink);
 }
 /* Tint the tip to match the frosted card instead of the default white wedge. */
 .waypoint-popup .maplibregl-popup-tip {
-  border-top-color: rgba(255, 255, 255, 0.72) !important;
-  border-bottom-color: rgba(255, 255, 255, 0.72) !important;
+  border-top-color: rgba(255, 253, 246, 0.78) !important;
+  border-bottom-color: rgba(255, 253, 246, 0.78) !important;
+}
+@media (prefers-color-scheme: dark) {
+  .waypoint-popup .maplibregl-popup-content {
+    background: rgba(33, 28, 23, 0.82);
+    border-color: rgba(61, 54, 43, 0.8);
+  }
+  .waypoint-popup .maplibregl-popup-tip {
+    border-top-color: rgba(33, 28, 23, 0.82) !important;
+    border-bottom-color: rgba(33, 28, 23, 0.82) !important;
+  }
 }
 
 .wp-pop {
   position: relative;
-  width: 248px;
-  max-width: 248px;
-  padding: 12px 14px 13px 16px;
+  /* Dynamic width: sizes to content (so short titles get a snug card) up to a
+     cap, where long titles wrap. Right padding == top/bottom; left a touch more
+     to clear the edge stripe. */
+  width: max-content;
+  min-width: 210px;
+  max-width: 340px;
+  padding: 15px 15px 15px 17px;
 }
-/* Thin day-colored left stripe. --day lives on .wp-pop so it's always in
-   scope for this pseudo-element. */
+/* Day-colored left stripe — flush against the card's left edge, full height
+   (the popup content's overflow:hidden + radius round its ends to match the
+   card corners). --day lives on .wp-pop so it's in scope for this pseudo. */
 .wp-pop::before {
   content: "";
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
+  width: 4px;
   background: var(--day, #6b7280);
 }
 
-.wp-top {
+/* Category caption row (top): glyph + UPPERCASE label on the left, ✕ on the
+   right (vertically aligned with the caption). DAY owns hue via the stripe. */
+.wp-cat {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
-.wp-title {
-  flex: 1;
-  padding-right: 16px; /* reserve room for the absolutely-positioned ✕ */
-  font-weight: 650;
-  line-height: 1.25;
-  color: #18181b;
+.wp-cat-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-.wp-title-empty {
-  font-style: italic;
-  font-weight: 500;
-  color: #9ca3af;
+.wp-cat-label svg {
+  width: 14px;
+  height: 14px;
 }
 .wp-close {
-  position: absolute;
-  top: 3px;
-  right: 11px;
+  flex: 0 0 auto;
+  margin: -2px -2px 0 0;
   padding: 2px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #475569;
-  font-size: 14px;
+  color: var(--muted);
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0.6;
+  opacity: 0.45;
 }
 .wp-close:hover {
   opacity: 1;
-  background: rgba(0, 0, 0, 0.06);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
-.wp-badges {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 2px;
+.wp-title {
+  font-family: var(--font-fraunces), "LXGW WenKai", ui-serif, Georgia, serif;
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  line-height: 1.18;
+  color: var(--ink-strong);
+  margin-top: 7px;
+  /* Never exceed 3 rows (the dynamic width widens to fit; beyond that, ellipsis). */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: break-word;
 }
-.wp-pill {
-  text-transform: capitalize;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+.wp-title-empty {
+  font-style: italic;
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--muted);
+}
+
+/* "date · time" (and, for drives, the origin → destination route). */
+.wp-when {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+/* Facts line — duration · place (or duration · distance for drives). Colored in
+   the DAY hue to tie back to the stripe + this item's day. */
+.wp-stats {
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--day, #6b7280);
-  background: color-mix(in srgb, var(--day, #6b7280) 14%, white);
-}
-.wp-date {
-  font-size: 12.5px;
-  color: #64748b;
-}
-
-.wp-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
-}
-.wp-place {
-  font-weight: 500;
-  color: #334155;
-}
-.wp-stats {
-  font-weight: 600;
-  color: #2563eb;
+  margin-top: 9px;
 }

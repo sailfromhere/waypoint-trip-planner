@@ -56,6 +56,8 @@ import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state
 import { formatItemTimeLabel, formatItemTzBadge } from "@/lib/format";
 import { EditableCell } from "./editable-cell";
 import { LocationCell } from "./location-cell";
+import { buildDayColorMap } from "@/lib/trip-state/day-colors";
+import { TitleCategoryCell } from "./category-cell";
 
 const col = createColumnHelper<ItineraryItem>();
 
@@ -74,26 +76,15 @@ function useColumns(
       [
         col.accessor("title", {
           header: "Title",
-          size: 180,
-          cell: ({ row, getValue }) => (
-            <EditableCell
-              value={getValue()}
-              type="text"
-              multiline
-              placeholder="Untitled"
-              onSave={(v) => onUpdate(row.original.id, "title", v)}
-              className="font-medium min-h-[4.5rem]"
-            />
-          ),
-        }),
-        col.accessor("category", {
-          header: "Category",
-          size: 110,
-          cell: ({ row, getValue }) => (
-            <EditableCell
-              value={getValue()}
-              type="category"
-              onSave={(v) => onUpdate(row.original.id, "category", v)}
+          size: 240,
+          // Merged Title + Category: icon chip + title with an uppercase category
+          // caption beneath (render-match layout). Category edits via a custom
+          // menu opened by the chip or the caption.
+          cell: ({ row }) => (
+            <TitleCategoryCell
+              item={row.original}
+              onUpdateTitle={(v) => onUpdate(row.original.id, "title", v)}
+              onUpdateCategory={(v) => onUpdate(row.original.id, "category", v)}
             />
           ),
         }),
@@ -477,7 +468,6 @@ function DragRowPreview({
 type ColumnMeta = { id: string; label: string; fixed?: boolean };
 const ITINERARY_COLUMNS: ColumnMeta[] = [
   { id: "title", label: "Title", fixed: true },
-  { id: "category", label: "Category" },
   { id: "startTime", label: "Start" },
   { id: "durationMinutes", label: "Duration" },
   { id: "destinationName", label: "Location" },
@@ -635,6 +625,7 @@ function ColumnsMenu({
 
 function DayGroupTable({
   group,
+  dayColor,
   columns,
   columnOrder,
   columnVisibility,
@@ -649,6 +640,7 @@ function DayGroupTable({
   isCrossDayTarget,
 }: {
   group: DayGroup;
+  dayColor?: string;
   columns: ColumnDef<ItineraryItem, unknown>[];
   // Shared across every day-table so all groups show the same columns in the
   // same order ("actions" is pinned first/leftmost by the parent).
@@ -699,9 +691,15 @@ function DayGroupTable({
   return (
     <div className="mb-6">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+        <h3 className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+          {dayColor && (
+            <span
+              className="inline-block w-2 h-2 rounded-[2px] shrink-0"
+              style={{ background: dayColor }}
+            />
+          )}
           {group.label}
-          <span className="ml-2 text-zinc-400 dark:text-zinc-500 font-normal">
+          <span className="text-zinc-400 dark:text-zinc-500 font-normal normal-case">
             ({group.items.length} {group.items.length === 1 ? "item" : "items"})
           </span>
           {warning && warning.warnings.length > 0 && (
@@ -731,6 +729,13 @@ function DayGroupTable({
             ? "border-blue-400 dark:border-blue-500 ring-1 ring-blue-300 dark:ring-blue-700"
             : "border-zinc-200 dark:border-zinc-800"
         }`}
+        // Day-colored left stripe (matches the map ring / calendar band): a thick
+        // left border in this day's hue. Yields to the cross-day drop highlight.
+        style={
+          !isCrossDayTarget && dayColor
+            ? { borderLeftColor: dayColor, borderLeftWidth: 4 }
+            : undefined
+        }
       >
         <table
           // table-fixed so column widths are honored EXACTLY (auto-layout sizes
@@ -1287,10 +1292,30 @@ export function ItineraryTable({
     homeTimezone
   );
   const groups = useMemo(() => groupByDate(items ?? []), [items]);
+  // Day → hue (matches map + calendar) so each day-group header carries its color.
+  const dayColors = useMemo(
+    () => buildDayColorMap((items ?? []).map((i) => i.date)),
+    [items]
+  );
 
   if (isLoading) {
     return (
-      <p className="text-sm text-zinc-500 py-8">Loading itinerary...</p>
+      <div className="space-y-6">
+        {[0, 1].map((g) => (
+          <div key={g} className="space-y-2">
+            <div className="skeleton h-3 w-32" />
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 divide-y divide-zinc-100 dark:divide-zinc-800/50">
+              {[0, 1, 2].map((r) => (
+                <div key={r} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="skeleton h-4 w-4 rounded-full shrink-0" />
+                  <div className="skeleton h-4 flex-1" />
+                  <div className="skeleton h-4 w-16 shrink-0" />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     );
   }
 
@@ -1328,8 +1353,26 @@ export function ItineraryTable({
       )}
 
       {groups.length === 0 ? (
-        <div className="text-center py-12 text-sm text-zinc-500">
-          <p className="mb-4">No items yet. Add your first day to get started.</p>
+        <div className="text-center py-12 flex flex-col items-center">
+          <svg
+            viewBox="0 0 24 24"
+            className="w-9 h-9 mb-3 text-zinc-300 dark:text-zinc-600"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z" />
+            <path d="M9 3v15M15 6v15" />
+          </svg>
+          <p className="font-display text-lg font-semibold text-zinc-700 dark:text-zinc-200">
+            No stops yet
+          </p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+            Add a day below, or ask the AI copilot to draft an itinerary.
+          </p>
         </div>
       ) : (
         <DndContext
@@ -1350,6 +1393,7 @@ export function ItineraryTable({
               <DayGroupTable
                 key={key}
                 group={group}
+                dayColor={group.date ? dayColors.get(group.date) : undefined}
                 columns={columns}
                 columnOrder={tableColumnOrder}
                 columnVisibility={columnVisibility}

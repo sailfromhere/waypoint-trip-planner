@@ -19,28 +19,7 @@ import type {
 } from "@/lib/ai/planner";
 import type { PlanningTurn } from "@/db/types";
 import { formatDurationMinutes } from "@/lib/format";
-
-const CATEGORY_LABELS: Record<string, string> = {
-  drive: "Drive",
-  flight: "Flight",
-  activity: "Activity",
-  meal: "Meal",
-  lodging: "Lodging",
-  transit: "Transit",
-  rest: "Rest",
-  other: "Other",
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  drive: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-  flight: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
-  activity: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-  meal: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
-  lodging: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300",
-  transit: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300",
-  rest: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-  other: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
-};
+import { CategoryIcon, categoryLabel } from "@/lib/trip-state/categories";
 
 const FIELD_LABELS: Record<string, string> = {
   date: "Date",
@@ -95,7 +74,7 @@ function formatFieldValue(key: string, value: unknown): string {
     case "costCents":
       return formatCost(Number(value));
     case "category":
-      return CATEGORY_LABELS[String(value)] ?? String(value);
+      return categoryLabel(String(value));
     default:
       return String(value);
   }
@@ -581,12 +560,9 @@ function CreateBody({ action }: { action: CreateAction }) {
       <div className="flex items-center gap-2 flex-wrap">
         <ActionBadge kind="new" />
         <span className="text-sm font-medium">{item.title}</span>
-        <span
-          className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-            CATEGORY_COLORS[item.category] ?? CATEGORY_COLORS.other
-          }`}
-        >
-          {CATEGORY_LABELS[item.category] ?? item.category}
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+          <CategoryIcon category={item.category} size={11} />
+          {categoryLabel(item.category)}
         </span>
         {item.date && <span className="text-xs text-zinc-400">{formatDate(item.date)}</span>}
         {item.startTime && (

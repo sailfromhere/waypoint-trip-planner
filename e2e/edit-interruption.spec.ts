@@ -144,7 +144,7 @@ test("an items refetch (text-commit geocode) doesn't remount a session-created r
   const newRow = page.locator("tbody tr").last();
 
   // Commit a free-text location (no pick) → starts the ~700ms re-geocode timer.
-  const locationCell = newRow.locator("td").nth(5);
+  const locationCell = newRow.locator("td").nth(4);
   await locationCell.click();
   const locInput = locationCell.locator("textarea");
   await locInput.fill("Somewhere Custom");
@@ -168,7 +168,7 @@ test("an items refetch (text-commit geocode) doesn't remount a session-created r
   await expect(titleEditor).toHaveValue("Keep Me");
 });
 
-test("the Category select is uncontrolled but still reflects an external change (key remount)", async ({ page }) => {
+test("the category caption reflects a custom-menu pick AND an external change", async ({ page }) => {
   // Drive a deterministic in-app items refetch via the text-commit geocode.
   await page.route("**/geocode/suggest**", (route) =>
     route.fulfill({ json: { suggestions: [] } })
@@ -181,25 +181,24 @@ test("the Category select is uncontrolled but still reflects an external change 
 
   await page.goto(`/trips/${tripId}`);
   const row = page.locator("tr", { hasText: "Visit" }).first();
-  const select = row.locator("td").nth(2).locator("select");
-  await expect(select).toHaveValue("activity");
+  const caption = row.getByTestId("category-caption");
+  await expect(caption).toHaveText("Activity");
 
-  // A user pick via the select still round-trips (onChange fires on the
-  // uncontrolled control) and the rendered value follows.
-  await select.selectOption("meal");
-  await expect(select).toHaveValue("meal");
+  // Open the custom category menu from the chip trigger and pick a new value.
+  await row.getByTestId("category-trigger").click();
+  await page.getByTestId("category-menu").getByRole("option", { name: "Meal" }).click();
+  await expect(caption).toHaveText("Meal");
   await page.waitForResponse(
     (r) => /\/items\/[^/]+$/.test(r.url()) && r.request().method() === "PATCH"
   );
 
   // Change the category OUT OF BAND on the server, then force an in-app refetch
-  // (debounced geocode). With `defaultValue` alone the select would stay stale;
-  // the `key` remounts it to the new value.
+  // (debounced geocode). The caption is driven by the item prop, so it follows.
   const ctx = await pwRequest.newContext({ baseURL: BASE });
   await ctx.patch(`/api/trips/${tripId}/items/${itemId}`, { data: { category: "lodging" } });
   await ctx.dispose();
 
-  const locCell = row.locator("td").nth(5);
+  const locCell = row.locator("td").nth(4);
   await locCell.click();
   const locInput = locCell.locator("textarea");
   await locInput.fill("Anywhere");
@@ -208,10 +207,10 @@ test("the Category select is uncontrolled but still reflects an external change 
     (r) => r.url().endsWith("/geocode") && r.request().method() === "POST"
   );
 
-  await expect(select).toHaveValue("lodging");
+  await expect(caption).toHaveText("Lodging");
 });
 
-test("picking a location keeps focus in the Category cell (map popup must not steal it)", async ({ page }) => {
+test("picking a location keeps focus on the category trigger (map popup must not steal it)", async ({ page }) => {
   await page.route("**/geocode/suggest**", (route) =>
     route.fulfill({
       json: { suggestions: [{ id: "x:1", name: "Old Faithful Inn", context: "WY" }] },
@@ -231,17 +230,18 @@ test("picking a location keeps focus in the Category cell (map popup must not st
   await page.waitForResponse((r) => r.url().endsWith("/items") && r.request().method() === "POST");
 
   const newRow = page.locator("tbody tr").last();
-  await newRow.locator("td").nth(5).click();
-  await newRow.locator("td").nth(5).locator("textarea").fill("Old Faithful");
+  await newRow.locator("td").nth(4).click();
+  await newRow.locator("td").nth(4).locator("textarea").fill("Old Faithful");
   await page.getByText("Old Faithful Inn", { exact: true }).click();
 
-  // Focus the Category select (as the user does next), then let the map settle.
-  const select = newRow.locator("td").nth(2).locator("select");
-  await select.focus();
+  // Focus the category trigger (a control the user might touch next), then let
+  // the map settle.
+  const trigger = newRow.getByTestId("category-trigger");
+  await trigger.focus();
   await page.waitForResponse((r) => r.url().endsWith("/routes")).catch(() => {});
 
   // The popup opened (scenario reproduced) but `focusAfterOpen:false` means it
-  // did NOT pull focus out of the Category cell.
+  // did NOT pull focus off the category trigger.
   await expect(page.locator(".maplibregl-popup")).toBeVisible();
-  await expect(select).toBeFocused();
+  await expect(trigger).toBeFocused();
 });

@@ -46,7 +46,13 @@ test.afterAll(async () => {
 });
 
 async function fetchItems(page: Page) {
-  const res = await page.request.get(`/api/trips/${tripId}/items`);
+  // Retry a transiently-failed GET (the Supabase pooler occasionally returns a
+  // 5xx under burst load) so a single glitch inside expect.poll doesn't abort.
+  let res = await page.request.get(`/api/trips/${tripId}/items`);
+  for (let i = 0; i < 4 && !res.ok(); i++) {
+    await page.waitForTimeout(400);
+    res = await page.request.get(`/api/trips/${tripId}/items`);
+  }
   expect(res.ok()).toBeTruthy();
   return (await res.json()) as {
     id: string;
@@ -72,17 +78,22 @@ async function dragRowOnto(page: Page, sourceText: string, targetText: string) {
   await page.waitForLoadState("networkidle");
   const sb = (await source.boundingBox())!;
   const tb = (await target.boundingBox())!;
-  // Grab the source over the title cell body — past the 28px leftmost "actions"
-  // (delete ✕) column so we don't grab the delete button — and away from editors.
-  const gx = 40;
+  // Grab the source over the title TEXT — past the 28px "actions" (delete ✕)
+  // column AND past the ~36px category icon chip (which stops pointerdown as a
+  // click target). The title read-view doesn't stop pointerdown, so the row's
+  // PointerSensor activates the drag from here.
+  const gx = 95;
   await page.mouse.move(sb.x + gx, sb.y + sb.height / 2);
   await page.mouse.down();
   // Cross the 6px activation threshold.
   await page.mouse.move(sb.x + gx, sb.y + sb.height / 2 + 12, { steps: 4 });
-  // Travel to the target, ending just past its centre so the drop lands there.
-  await page.mouse.move(tb.x + gx, tb.y + tb.height / 2, { steps: 12 });
-  await page.mouse.move(tb.x + gx, tb.y + tb.height * 0.66, { steps: 4 });
-  await page.waitForTimeout(60);
+  // Travel to the target's PRE-drag centre and release there. As the lifted
+  // source row collapses the rows below shift up, so the target's pre-drag centre
+  // ends up over the target's lower half / day-end slot at drop time — i.e. "after
+  // the target". Overshooting past the target's bottom lands in the dead zone
+  // between day-groups and cancels (empirically swept with ~70px-tall rows).
+  await page.mouse.move(tb.x + gx, tb.y + tb.height / 2, { steps: 16 });
+  await page.waitForTimeout(120);
   await page.mouse.up();
 }
 

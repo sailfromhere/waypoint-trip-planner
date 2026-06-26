@@ -211,7 +211,7 @@ export default function TripPage({
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950 font-[family-name:var(--font-geist-sans)]">
+    <div className="flex flex-col h-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950 font-sans">
       <header className="shrink-0 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-3">
         <div className="max-w-full mx-auto flex items-center gap-4">
           <Link

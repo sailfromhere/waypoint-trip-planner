@@ -42,7 +42,9 @@ export function TripHeader({
     return (
       <div className="mb-6 flex items-start justify-between">
         <div className="flex flex-col gap-1">
-          <h2 className="text-lg font-semibold">{trip.name}</h2>
+          <h2 className="font-display text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+            {trip.name}
+          </h2>
           {trip.description && (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {trip.description}
