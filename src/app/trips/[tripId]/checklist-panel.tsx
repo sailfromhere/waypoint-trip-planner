@@ -44,6 +44,7 @@ import {
   useDeleteTemplate,
 } from "@/lib/hooks/use-checklist-templates";
 import type { ChecklistInstance, ChecklistTemplate } from "@/db/types";
+import { Button } from "@/components/ui/button";
 
 // ── Shared small components ──
 
@@ -395,19 +396,20 @@ function TemplateRow({
             className="text-xs bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 rounded-md px-2 py-1 outline-none focus:border-zinc-400 text-zinc-500"
           />
           <div className="flex gap-1">
-            <button onClick={commit} className="text-[11px] text-blue-500 hover:text-blue-600 px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30">
+            <Button size="sm" onClick={commit}>
               Save
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setEditText(template.text);
                 setEditCategory(template.category ?? "");
                 setEditing(false);
               }}
-              className="text-[11px] text-zinc-500 hover:text-zinc-700 px-1.5 py-0.5 rounded"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
@@ -510,13 +512,9 @@ function TemplateManager({ onClose }: { onClose: () => void }) {
                   <option key={c} value={c} />
                 ))}
               </datalist>
-              <button
-                onClick={handleAdd}
-                disabled={!input.trim()}
-                className="text-xs text-white bg-zinc-700 hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-500 px-3 py-1 rounded-md transition-colors disabled:opacity-40"
-              >
+              <Button size="sm" onClick={handleAdd} disabled={!input.trim()}>
                 Add
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -650,19 +648,21 @@ export function ChecklistPanel({ tripId }: { tripId: string }) {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="shrink-0 px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 flex items-center gap-2">
-        <button
+        <Button
+          variant="quiet"
+          size="sm"
           onClick={() => instantiate.mutate()}
           disabled={instantiate.isPending}
-          className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors disabled:opacity-50"
         >
           {instantiate.isPending ? "Loading..." : "Load from templates"}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setShowTemplateManager(true)}
-          className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
         >
           Manage templates
-        </button>
+        </Button>
         {instantiate.data && (
           <span className="text-[10px] text-zinc-400 ml-auto">
             {instantiate.data.created > 0
@@ -687,12 +687,14 @@ export function ChecklistPanel({ tripId }: { tripId: string }) {
             className="flex-1 min-w-0 text-sm bg-transparent outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-500 text-zinc-700 dark:text-zinc-300 leading-relaxed"
           />
           {input.trim() && (
-            <button
+            <Button
+              variant="quiet"
+              size="sm"
+              className="shrink-0 mt-0.5"
               onClick={handleSubmit}
-              className="shrink-0 mt-0.5 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
             >
               Add
-            </button>
+            </Button>
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Trip } from "@/db/types";
 import { tripStatus } from "@/db/schema";
+import { Button } from "@/components/ui/button";
 
 const STATUS_LABELS: Record<string, string> = {
   dreaming: "Dreaming",
@@ -74,12 +75,9 @@ export function TripHeader({
             )}
           </div>
         </div>
-        <button
-          onClick={() => setEditing(true)}
-          className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 underline"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
           Edit
-        </button>
+        </Button>
       </div>
     );
   }
@@ -122,44 +120,36 @@ export function TripHeader({
         </div>
       </div>
       <div className="flex gap-2 mt-4">
-        <button
-          onClick={handleSave}
-          className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-3 py-1.5 text-sm font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors"
-        >
-          Save
-        </button>
-        <button
-          onClick={() => setEditing(false)}
-          className="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-        >
+        <Button onClick={handleSave}>Save</Button>
+        <Button variant="secondary" onClick={() => setEditing(false)}>
           Cancel
-        </button>
+        </Button>
         {onDelete &&
           (confirmDelete ? (
             <div className="ml-auto flex items-center gap-2">
               <span className="text-xs text-red-600 dark:text-red-400">
                 Delete this trip and all its items?
               </span>
-              <button
-                onClick={onDelete}
-                className="rounded-md bg-red-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-red-700 transition-colors"
-              >
+              <Button variant="danger" onClick={onDelete}>
                 Delete
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setConfirmDelete(false)}
-                className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
               >
                 Keep
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
+            <Button
+              variant="danger-ghost"
+              size="sm"
+              className="ml-auto"
               onClick={() => setConfirmDelete(true)}
-              className="ml-auto text-xs text-red-500 hover:text-red-600 dark:hover:text-red-400 underline"
             >
               Delete trip
-            </button>
+            </Button>
           ))}
       </div>
     </div>

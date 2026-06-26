@@ -18,6 +18,7 @@ import { ChecklistPanel } from "./checklist-panel";
 import { PackingPanel } from "./packing-panel";
 import { usePacking } from "@/lib/hooks/use-packing";
 import { autoDriveDuration } from "@/lib/trip-state/drive-duration";
+import { Button } from "@/components/ui/button";
 
 const TripMap = lazy(() =>
   import("./trip-map").then((mod) => ({ default: mod.TripMap }))
@@ -224,38 +225,41 @@ export default function TripPage({
           <span className="text-sm font-medium truncate">{trip.name}</span>
           <div className="ml-auto flex items-center gap-2">
             {needsGeocoding > 0 && (
-              <button
+              <Button
+                variant="quiet"
+                size="sm"
                 onClick={() => geocode.mutate(undefined)}
                 disabled={geocode.isPending}
-                className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-2.5 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors disabled:opacity-50"
               >
                 {geocode.isPending
                   ? "Geocoding..."
                   : `Geocode ${needsGeocoding} item${needsGeocoding !== 1 ? "s" : ""}`}
-              </button>
+              </Button>
             )}
             {geocodedCount > 0 && (
               <>
                 <span className="text-xs text-zinc-400">
                   {geocodedCount} mapped
                 </span>
-                <button
+                <Button
+                  variant="quiet"
+                  size="sm"
                   onClick={() => geocode.mutate({ force: true })}
                   disabled={geocode.isPending}
-                  className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-2.5 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors disabled:opacity-50"
                   title="Re-fetch coordinates for all items (fixes stale/incorrect locations)"
                 >
                   Re-map all
-                </button>
+                </Button>
               </>
             )}
-            <button
+            <Button
+              variant="quiet"
+              size="sm"
               onClick={() => setMapCollapsed(!mapCollapsed)}
-              className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-2.5 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
               title={mapCollapsed ? "Show map" : "Hide map"}
             >
               {mapCollapsed ? "Show map" : "Hide map"}
-            </button>
+            </Button>
           </div>
         </div>
       </header>

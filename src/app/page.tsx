@@ -10,6 +10,7 @@ import {
   fetchTrip,
 } from "@/lib/hooks/use-trips";
 import { itemsQueryKey, fetchTripItems } from "@/lib/hooks/use-itinerary";
+import { Button } from "@/components/ui/button";
 import Link from "next/link";
 
 // Warm the heavy lazy map chunk (maplibre-gl) before the user opens a trip.
@@ -73,12 +74,7 @@ export default function Home() {
       <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <h1 className="font-display text-2xl font-semibold">Waypoint</h1>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-sm font-medium hover:brightness-110 transition-all"
-          >
-            New Trip
-          </button>
+          <Button onClick={() => setShowCreate(true)}>New Trip</Button>
         </div>
       </header>
 
@@ -96,23 +92,18 @@ export default function Home() {
               className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-zinc-500 dark:focus:border-zinc-400"
               autoFocus
             />
-            <button
-              type="submit"
-              disabled={createTrip.isPending}
-              className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 disabled:opacity-50 transition-colors"
-            >
+            <Button type="submit" disabled={createTrip.isPending}>
               Create
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
               onClick={() => {
                 setShowCreate(false);
                 setNewName("");
               }}
-              className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
             >
               Cancel
-            </button>
+            </Button>
           </form>
         )}
 
@@ -150,12 +141,7 @@ export default function Home() {
               Turn a vague idea into a practical, geography-aware itinerary.
             </p>
             {!showCreate && (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="rounded-lg bg-[var(--accent)] text-[var(--accent-ink)] px-4 py-2 text-sm font-medium hover:brightness-110 transition-all"
-              >
-                New Trip
-              </button>
+              <Button onClick={() => setShowCreate(true)}>New Trip</Button>
             )}
           </div>
         ) : (

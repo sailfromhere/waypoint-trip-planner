@@ -20,6 +20,7 @@ import type {
 import type { PlanningTurn } from "@/db/types";
 import { formatDurationMinutes } from "@/lib/format";
 import { CategoryIcon, categoryLabel } from "@/lib/trip-state/categories";
+import { Button } from "@/components/ui/button";
 
 const FIELD_LABELS: Record<string, string> = {
   date: "Date",
@@ -253,13 +254,13 @@ export function PlanningPanel({
               className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:border-zinc-500 placeholder:text-zinc-400 resize-y min-h-[2.5rem] max-h-48"
               disabled={generatePlan.isPending}
             />
-            <button
+            <Button
               type="submit"
+              className="whitespace-nowrap"
               disabled={!prompt.trim() || generatePlan.isPending}
-              className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
             >
               {generatePlan.isPending ? "Planning..." : "Plan"}
-            </button>
+            </Button>
           </form>
 
           {/* Error */}
@@ -328,18 +329,20 @@ export function PlanningPanel({
                 </span>
                 {selectableCount > 0 && (
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => selectAll(true)}
-                      className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                     >
                       Select all
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => selectAll(false)}
-                      className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                     >
                       Deselect all
-                    </button>
+                    </Button>
                   </div>
                 )}
               </div>
@@ -369,33 +372,33 @@ export function PlanningPanel({
                   className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-zinc-500 placeholder:text-zinc-400"
                   disabled={refinePlan.isPending}
                 />
-                <button
+                <Button
                   type="submit"
+                  variant="secondary"
+                  className="whitespace-nowrap"
                   disabled={!refineInput.trim() || refinePlan.isPending}
-                  className="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                 >
                   {refinePlan.isPending ? "Refining..." : "Refine"}
-                </button>
+                </Button>
               </form>
 
               {/* Accept / Dismiss */}
               <div className="flex gap-2 mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                <button
+                <Button
                   onClick={handleAccept}
                   disabled={selected.size === 0 || acceptPlan.isPending}
-                  className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {acceptPlan.isPending
                     ? "Applying..."
                     : `Apply ${selected.size} change${selected.size !== 1 ? "s" : ""}`}
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="secondary"
                   onClick={handleDismiss}
                   disabled={acceptPlan.isPending}
-                  className="rounded-md border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 >
                   Dismiss
-                </button>
+                </Button>
                 {acceptPlan.isError && (
                   <span className="text-sm text-red-600 dark:text-red-400 self-center ml-2">
                     {acceptPlan.error.message}
@@ -693,12 +696,9 @@ function HistoryEntry({
               </div>
             ))}
           </div>
-          <button
-            onClick={onReuse}
-            className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 underline"
-          >
+          <Button variant="ghost" size="sm" onClick={onReuse}>
             Reuse this prompt
-          </button>
+          </Button>
         </div>
       )}
     </div>

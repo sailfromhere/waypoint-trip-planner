@@ -37,6 +37,7 @@ import {
   useDeleteTask,
 } from "@/lib/hooks/use-tasks";
 import type { TripTask } from "@/db/types";
+import { Button } from "@/components/ui/button";
 
 function AutoTextarea({
   value,
@@ -409,12 +410,14 @@ export function TasksPanel({ tripId }: { tripId: string }) {
             className="flex-1 min-w-0 text-sm bg-transparent outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-500 text-zinc-700 dark:text-zinc-300 leading-relaxed"
           />
           {input.trim() && (
-            <button
+            <Button
+              variant="quiet"
+              size="sm"
+              className="shrink-0 mt-0.5"
               onClick={handleSubmit}
-              className="shrink-0 mt-0.5 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
             >
               Add
-            </button>
+            </Button>
           )}
         </div>
       </div>

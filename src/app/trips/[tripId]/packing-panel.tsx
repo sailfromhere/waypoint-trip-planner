@@ -55,6 +55,7 @@ import type {
   PackingTemplate,
   PackingRequiredness,
 } from "@/db/types";
+import { Button } from "@/components/ui/button";
 
 const REQUIREDNESS: PackingRequiredness[] = [
   "required",
@@ -464,19 +465,12 @@ function LoadTemplatesPopover({
         </div>
       )}
       <div className="flex items-center justify-end gap-1.5 mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
-        <button
-          onClick={onClose}
-          className="text-[11px] text-zinc-500 hover:text-zinc-700 px-2 py-1"
-        >
+        <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
-        </button>
-        <button
-          onClick={() => onLoad([...selected])}
-          disabled={pending}
-          className="text-[11px] text-white bg-zinc-700 hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-500 px-2.5 py-1 rounded-md transition-colors disabled:opacity-50"
-        >
+        </Button>
+        <Button size="sm" onClick={() => onLoad([...selected])} disabled={pending}>
           {pending ? "Loading..." : "Load"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -626,20 +620,13 @@ function ItemForm({
         </div>
       )}
       <div className="flex gap-1.5">
-        <button
-          onClick={submit}
-          disabled={!v.name.trim()}
-          className="text-[11px] text-white bg-zinc-700 hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-500 px-3 py-1 rounded-md transition-colors disabled:opacity-40"
-        >
+        <Button size="sm" onClick={submit} disabled={!v.name.trim()}>
           {submitLabel}
-        </button>
+        </Button>
         {onCancel && (
-          <button
-            onClick={onCancel}
-            className="text-[11px] text-zinc-500 hover:text-zinc-700 px-2 py-1 rounded"
-          >
+          <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -876,12 +863,14 @@ function RepositoryManager({ onClose }: { onClose: () => void }) {
               onCancel={() => setShowAdd(false)}
             />
           ) : (
-            <button
+            <Button
+              variant="dashed"
+              size="sm"
+              className="w-full"
               onClick={() => setShowAdd(true)}
-              className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-dashed border-zinc-300 dark:border-zinc-600 rounded-md px-3 py-1.5 w-full hover:border-zinc-400 transition-colors"
             >
               + Add item to repository
-            </button>
+            </Button>
           )}
         </div>
 
@@ -1042,12 +1031,13 @@ export function PackingPanel({ tripId }: { tripId: string }) {
       {/* Toolbar */}
       <div className="shrink-0 px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 flex items-center gap-2 relative">
         <div className="relative">
-          <button
+          <Button
+            variant="quiet"
+            size="sm"
             onClick={() => setShowLoad((s) => !s)}
-            className="text-[11px] text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
           >
             Load templates
-          </button>
+          </Button>
           {showLoad && (
             <LoadTemplatesPopover
               templates={[...(templates ?? [])].sort(
@@ -1062,12 +1052,9 @@ export function PackingPanel({ tripId }: { tripId: string }) {
             />
           )}
         </div>
-        <button
-          onClick={() => setShowRepo(true)}
-          className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
-        >
+        <Button variant="ghost" size="sm" onClick={() => setShowRepo(true)}>
           Manage repository
-        </button>
+        </Button>
         {instantiate.data && (
           <span className="text-[10px] text-zinc-400 ml-auto">
             {instantiate.data.created > 0
@@ -1093,12 +1080,14 @@ export function PackingPanel({ tripId }: { tripId: string }) {
             className="flex-1 min-w-0 text-sm bg-transparent outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-500 text-zinc-700 dark:text-zinc-300 leading-relaxed"
           />
           {input.trim() && (
-            <button
+            <Button
+              variant="quiet"
+              size="sm"
+              className="shrink-0 mt-0.5"
               onClick={handleSubmit}
-              className="shrink-0 mt-0.5 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-600 hover:border-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
             >
               Add
-            </button>
+            </Button>
           )}
         </div>
       </div>

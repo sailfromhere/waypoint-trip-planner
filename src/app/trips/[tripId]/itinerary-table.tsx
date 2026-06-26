@@ -58,6 +58,7 @@ import { EditableCell } from "./editable-cell";
 import { LocationCell } from "./location-cell";
 import { buildDayColorMap } from "@/lib/trip-state/day-colors";
 import { TitleCategoryCell } from "./category-cell";
+import { Button } from "@/components/ui/button";
 
 const col = createColumnHelper<ItineraryItem>();
 
@@ -580,13 +581,15 @@ function ColumnsMenu({
 
   return (
     <div className="relative" ref={ref}>
-      <button
+      <Button
+        variant="quiet"
+        size="sm"
+        icon="⚙"
         onClick={() => setOpen((o) => !o)}
-        className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-2.5 py-1 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
         title="Show, hide, and reorder columns"
       >
-        ⚙ Columns{hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
-      </button>
+        Columns{hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ""}
+      </Button>
       {open && (
         <div
           className={`absolute right-0 z-50 w-60 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl p-1.5 ${
@@ -709,13 +712,16 @@ function DayGroupTable({
           )}
         </h3>
         {onAutoSchedule && group.date && (
-          <button
+          <Button
+            variant="quiet"
+            size="sm"
+            icon="⏱"
             onClick={onAutoSchedule}
-            className="text-[11px] text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded px-2 py-0.5 hover:border-zinc-400 dark:hover:border-zinc-600 transition-colors normal-case"
+            className="normal-case"
             title="Fill in blank start times for this day (drive times from routing; your set times are kept)"
           >
-            ⏱ Auto-schedule
-          </button>
+            Auto-schedule
+          </Button>
         )}
       </div>
 
@@ -1438,7 +1444,7 @@ export function ItineraryTable({
         </DndContext>
       )}
 
-      <div className="flex gap-2 mt-2">
+      <div className="flex items-center gap-2 mt-2">
         {showNewDay ? (
           <form onSubmit={handleAddDay} className="flex gap-2 items-center">
             <input
@@ -1448,36 +1454,33 @@ export function ItineraryTable({
               className="rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-zinc-500"
               autoFocus
             />
-            <button
-              type="submit"
-              className="rounded-md bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-3 py-1.5 text-xs font-medium hover:bg-zinc-700 dark:hover:bg-zinc-300 transition-colors"
-            >
-              Add
-            </button>
-            <button
-              type="button"
+            <Button type="submit">Add</Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowNewDay(false)}
-              className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
             >
               Cancel
-            </button>
+            </Button>
           </form>
         ) : (
           <>
-            <button
-              onClick={() => setShowNewDay(true)}
-              className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
-            >
+            <Button variant="dashed" size="sm" onClick={() => setShowNewDay(true)}>
               + Add day
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="dashed"
+              size="sm"
               onClick={() => handleAddItem(null)}
-              className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
             >
               + Unscheduled item
-            </button>
+            </Button>
             {(items ?? []).some((i) => i.date) && (
-              <button
+              <Button
+                variant="quiet"
+                size="sm"
+                icon="⏱"
+                className="ml-auto"
                 onClick={() =>
                   applySchedule(
                     sequenceTrip(items ?? [], driveSecondsById, {
@@ -1485,16 +1488,15 @@ export function ItineraryTable({
                     })
                   )
                 }
-                className="ml-auto text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 border border-zinc-300 dark:border-zinc-700 rounded-md px-3 py-1.5 hover:border-zinc-400 dark:hover:border-zinc-500 transition-colors"
                 title="Fill blank start times across all days (kept: your times & booked items)"
               >
-                ⏱ Auto-schedule all
-              </button>
+                Auto-schedule all
+              </Button>
             )}
             {groups.length > 0 && (
               <div
                 className={
-                  (items ?? []).some((i) => i.date) ? "py-0.5" : "ml-auto py-0.5"
+                  (items ?? []).some((i) => i.date) ? undefined : "ml-auto"
                 }
               >
                 <ColumnsMenu
