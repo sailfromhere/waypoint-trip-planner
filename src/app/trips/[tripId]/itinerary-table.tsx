@@ -689,7 +689,7 @@ function DayGroupTable({
   const itemIds = useMemo(() => group.items.map((i) => i.id), [group.items]);
 
   return (
-    <div className="mb-6">
+    <div className="mb-6 wp-contain-block">
       <div className="flex items-center justify-between mb-2">
         <h3 className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
           {dayColor && (

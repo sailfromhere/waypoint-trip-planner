@@ -214,3 +214,8 @@ One-liners only; grep the archive for the full verbatim entry.
 **Timezone (S7-TZ)**
 - [S7-TZ-1] Timezone foundation — derive + store per-endpoint tz — Built 2026-06-24
 - [S7-TZ-2] Full tz-aware sequencing + calendar/table/map rendering — Built 2026-06-24
+
+**Performance (S24, 2026-06-26 — see [[session24-perf-safari-scroll-prefetch]] in project memory)**
+- Safari left-pane scroll jank — `content-visibility`/`contain` containment on day groups + calendar (`.wp-contain-block`) — Built 2026-06-26 (Step-2 FC `height=auto` reverted to keep bounded calendar; **OPEN: real-Safari re-test of Step-1-alone; next lever `stickyHeaderDates={false}`**)
+- "Slow first trip open" diagnosis — confirmed Next-dev on-demand compile + cold cache, gone in prod build — Resolved 2026-06-26 (no code change needed)
+- Hover-prefetch trip data + map chunk from trip list — Built 2026-06-26 (not yet browser-verified)

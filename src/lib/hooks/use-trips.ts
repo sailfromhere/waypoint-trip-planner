@@ -18,14 +18,21 @@ export function useTrips() {
   });
 }
 
+// Shared key + fetcher so the trip page's `useTrip` and the trip-list's
+// hover-prefetch warm the SAME cache entry (drift here = the prefetch silently
+// misses and the trip still loads cold).
+export const tripQueryKey = (tripId: string) => ["trips", tripId] as const;
+
+export async function fetchTrip(tripId: string): Promise<Trip> {
+  const res = await fetch(`/api/trips/${tripId}`);
+  if (!res.ok) throw new Error("Failed to fetch trip");
+  return res.json();
+}
+
 export function useTrip(tripId: string) {
   return useQuery<Trip>({
-    queryKey: ["trips", tripId],
-    queryFn: async () => {
-      const res = await fetch(`/api/trips/${tripId}`);
-      if (!res.ok) throw new Error("Failed to fetch trip");
-      return res.json();
-    },
+    queryKey: tripQueryKey(tripId),
+    queryFn: () => fetchTrip(tripId),
   });
 }
 

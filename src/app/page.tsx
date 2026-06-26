@@ -1,8 +1,21 @@
 "use client";
 
-import { useState } from "react";
-import { useTrips, useCreateTrip, useDeleteTrip } from "@/lib/hooks/use-trips";
+import { useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  useTrips,
+  useCreateTrip,
+  useDeleteTrip,
+  tripQueryKey,
+  fetchTrip,
+} from "@/lib/hooks/use-trips";
+import { itemsQueryKey, fetchTripItems } from "@/lib/hooks/use-itinerary";
 import Link from "next/link";
+
+// Warm the heavy lazy map chunk (maplibre-gl) before the user opens a trip.
+// React.lazy in the trip page dedupes this import promise, so this just gets the
+// download/parse started early. Fire-and-forget.
+const warmTripMap = () => import("./trips/[tripId]/trip-map");
 
 const STATUS_LABELS: Record<string, string> = {
   dreaming: "Dreaming",
@@ -16,8 +29,30 @@ export default function Home() {
   const { data: trips, isLoading } = useTrips();
   const createTrip = useCreateTrip();
   const deleteTrip = useDeleteTrip();
+  const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
+
+  // On hover/focus of a trip card, warm the map chunk + prefetch the first-paint
+  // data (trip + items) so opening the trip feels instant on a cold load. The
+  // 30s staleTime matches the global default: repeat hovers are no-ops, and the
+  // trip page's hooks read this warm cache on mount instead of refetching.
+  const prefetchTrip = useCallback(
+    (tripId: string) => {
+      warmTripMap();
+      qc.prefetchQuery({
+        queryKey: tripQueryKey(tripId),
+        queryFn: () => fetchTrip(tripId),
+        staleTime: 30_000,
+      });
+      qc.prefetchQuery({
+        queryKey: itemsQueryKey(tripId),
+        queryFn: () => fetchTripItems(tripId),
+        staleTime: 30_000,
+      });
+    },
+    [qc]
+  );
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -129,6 +164,8 @@ export default function Home() {
               <Link
                 key={trip.id}
                 href={`/trips/${trip.id}`}
+                onMouseEnter={() => prefetchTrip(trip.id)}
+                onFocus={() => prefetchTrip(trip.id)}
                 className="group flex items-center justify-between rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4 hover:border-zinc-400 dark:hover:border-zinc-600 transition-colors"
               >
                 <div className="flex flex-col gap-1">

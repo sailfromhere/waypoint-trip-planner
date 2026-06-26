@@ -7,20 +7,33 @@ import {
 } from "@tanstack/react-query";
 import type { ItineraryItem, ItineraryItemRow } from "@/db/types";
 
+// Shared key + plain fetcher so the trip-list's hover-prefetch warms the SAME
+// cache entry the trip page reads (see use-trips.ts). The `_key`-carry below is
+// a refetch concern only — a cold prefetch has no prev cache, and getRowId
+// falls back to row.id when `_key` is absent, so plain rows are correct.
+export const itemsQueryKey = (tripId: string) =>
+  ["trips", tripId, "items"] as const;
+
+export async function fetchTripItems(
+  tripId: string
+): Promise<ItineraryItemRow[]> {
+  const res = await fetch(`/api/trips/${tripId}/items`);
+  if (!res.ok) throw new Error("Failed to fetch items");
+  return (await res.json()) as ItineraryItemRow[];
+}
+
 export function useItineraryItems(tripId: string) {
   const qc = useQueryClient();
   return useQuery<ItineraryItemRow[]>({
-    queryKey: ["trips", tripId, "items"],
+    queryKey: itemsQueryKey(tripId),
     queryFn: async () => {
-      const res = await fetch(`/api/trips/${tripId}/items`);
-      if (!res.ok) throw new Error("Failed to fetch items");
-      const rows = (await res.json()) as ItineraryItemRow[];
+      const rows = await fetchTripItems(tripId);
       // Carry the stable client `_key` across the refetch: server rows have
       // none, so without this any items-invalidation (e.g. the debounced
       // text-commit geocode) would re-key a row created this session →
       // remount → an in-progress edit is lost. Match on the real id, which is
       // stable once the optimistic temp→real swap has happened.
-      const prev = qc.getQueryData<ItineraryItemRow[]>(["trips", tripId, "items"]);
+      const prev = qc.getQueryData<ItineraryItemRow[]>(itemsQueryKey(tripId));
       if (!prev) return rows;
       const keyById = new Map(prev.map((r) => [r.id, r._key]));
       return rows.map((r) => {

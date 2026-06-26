@@ -173,6 +173,17 @@ body {
    so equal-specificity rules lose the cascade. We therefore bump specificity
    (the leading `.fc`) AND use !important on sizes/colors so these reliably win.
    Day-color event backgrounds are still set per-event in JS. */
+/* Scroll perf: skip layout/paint of off-screen blocks (each itinerary day
+   group) so scrolling the tall left pane doesn't repaint everything. WebKit
+   benefits most — it falls back to main-thread scrolling on a heavy pane.
+   `contain-intrinsic-size` reserves an estimated height so the scrollbar stays
+   stable as off-screen days realize (≈ a small day group; over-tall is worse
+   than slightly short). */
+.wp-contain-block {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 320px;
+}
+
 .waypoint-calendar {
   --fc-border-color: var(--border);
   --fc-today-bg-color: color-mix(in srgb, var(--accent) 9%, transparent);
@@ -180,6 +191,16 @@ body {
   /* Opaque (== the panel color). FC also uses this var for the "+more" popover
      surface — leaving it transparent made the popover see-through over the grid. */
   --fc-page-bg-color: var(--panel);
+  /* Scroll perf (Safari/WebKit): the calendar lives inside the left pane's one
+     tall `overflow-y-auto` scroller, and the heavy FC grid made WebKit repaint
+     the pane on the main thread every frame. `contain: layout paint` isolates
+     the grid's repaints from the rest of the pane; `content-visibility:auto`
+     skips its layout/paint entirely when scrolled off-screen. The calendar is a
+     fixed-height box (FC `height={760}` + toolbar), so reserve ≈ that height as
+     the intrinsic size to keep the scrollbar stable while it's off-screen. */
+  contain: layout paint;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 820px;
 }
 /* Toolbar: title at trip-title size; tighter gap below */
 .waypoint-calendar .fc .fc-toolbar.fc-header-toolbar {

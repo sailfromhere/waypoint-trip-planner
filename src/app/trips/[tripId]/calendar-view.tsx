@@ -321,6 +321,11 @@ export function CalendarView({
         eventDidMount={handleEventDidMount}
         dayCellClassNames={getDayCellClasses}
         eventMinHeight={16}
+        // Fixed-height bounded box with FC's own internal scroller (the grid
+        // scrolls within 760px; scrollTime sets the initial position). The
+        // Safari scroll-perf win comes from the CSS containment on this wrapper
+        // + the day groups (content-visibility / contain), NOT from removing
+        // this inner scroller — so we keep the bounded, scrollable calendar.
         height={760}
         eventClassNames={(arg) =>
           arg.event.extendedProps.itemId === selectedItemId
