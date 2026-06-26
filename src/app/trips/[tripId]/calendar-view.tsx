@@ -1,6 +1,14 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import {
+  useMemo,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -40,15 +48,35 @@ function hhmm(time: string | null): string | null {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
 }
 
-function fmtDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+// FullCalendar hands callbacks a "marker" Date whose UTC fields encode the
+// calendar-tz wall date (since we set `timeZone`). Read Y-M-D with UTC getters
+// to recover the cell's YYYY-MM-DD (local getters would shift a day off-UTC).
+function fcDayStr(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 function minutesBetween(a: Date, b: Date): number {
   return Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
 }
+
+// Month-view "+N more" → our own body-portaled popover (FC's native one clips
+// against the scrolling left pane's overflow). Built from our own items, not FC
+// seg internals, so it's stable and reuses our formatting helpers.
+type MorePopItem = {
+  id: string;
+  title: string;
+  color: string;
+  category: string;
+  timeLabel: string | null;
+};
+type MorePopoverData = {
+  dateLabel: string;
+  items: MorePopItem[];
+  anchor: { left: number; top: number; bottom: number };
+};
 
 export function CalendarView({
   tripId,
@@ -64,6 +92,8 @@ export function CalendarView({
   onItemSelect: (itemId: string) => void;
 }) {
   const updateItem = useUpdateItem(tripId);
+  const [morePopover, setMorePopover] = useState<MorePopoverData | null>(null);
+  const calendarRef = useRef<FullCalendar | null>(null);
 
   // The grid runs in a single display tz (the trip home tz) so block geometry is
   // honest — real durations, real ordering, a cross-tz flight draws its ELAPSED
@@ -178,7 +208,10 @@ export function CalendarView({
   // padded top band in that day's color. `wp-band-N` selects the color.
   function getDayCellClasses(arg: DayCellContentArg): string[] {
     if (arg.view.type !== "dayGridMonth") return [];
-    const color = dayColors.get(fmtDate(arg.date));
+    // arg.date is an FC MARKER date (we set timeZone) — read its Y-M-D with UTC
+    // getters (fcDayStr), not local. Local getters shift a day off-UTC and the
+    // band lands on the wrong cell (was: every band one day late west of UTC).
+    const color = dayColors.get(fcDayStr(arg.date));
     if (!color) return [];
     return ["wp-has-band", `wp-band-${DAY_COLORS.indexOf(color)}`];
   }
@@ -193,6 +226,7 @@ export function CalendarView({
   return (
     <div className="waypoint-calendar">
       <FullCalendar
+        ref={calendarRef}
         plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin, luxon3Plugin]}
         timeZone={gridTz}
         initialView="timeGridWeek"
@@ -206,17 +240,75 @@ export function CalendarView({
         eventClick={handleClick}
         eventDrop={handleDrop}
         eventResize={handleDrop}
+        // Clicking a DATE drills down: the day number (month) and day-of-week
+        // column header (week/day) become navlinks → Day view (FC default
+        // zoomTo 'day' → timeGridDay).
+        navLinks
+        // Clicking the EMPTY area of a month day cell → that week. Day numbers
+        // (navlinks), events, "+N more", and popovers don't fire dateClick (FC's
+        // isValidDateDownEl excludes them), so this never conflicts with the
+        // navlink/day drill-down or event selection. dateStr is the unambiguous
+        // ISO day (avoids passing FC's marker Date back into the API).
+        dateClick={(arg) => {
+          if (arg.view.type === "dayGridMonth") {
+            calendarRef.current?.getApi().changeView("timeGridWeek", arg.dateStr);
+          }
+        }}
         editable
         droppable={false}
         nowIndicator
         allDaySlot
-        dayMaxEvents={2}
-        moreLinkClick={(arg) =>
-          // In month/week, navigate to the day (the popover would clip against
-          // the scrolling pane / map). In Day view there's nowhere to navigate,
-          // and the single full-width column leaves room — show the popover.
-          arg.view.type === "timeGridDay" ? "popover" : "day"
-        }
+        // Per-view all-day handling: timegrid (week + day) shows ALL all-day
+        // events — the lane is height-capped + scrollable in CSS (see
+        // `.fc-scrollgrid-section-header .fc-daygrid-body` in globals.css), so
+        // there's no "+N more" and no navigate-away. Month keeps a row cap.
+        views={{
+          timeGrid: { dayMaxEvents: false },
+          dayGridMonth: { dayMaxEvents: 4 },
+        }}
+        moreLinkClick={(arg) => {
+          // Only reached in Month now (timegrid no longer truncates). Open our
+          // own body-portaled popover listing that day's events instead of
+          // navigating away. Built from our items (not FC seg internals) so it
+          // reuses our day color + tz-aware time formatting.
+          const dateStr = fcDayStr(arg.date);
+          const dayItems = dated
+            .filter((i) => i.date === dateStr)
+            .sort((a, b) => {
+              const at = hhmm(a.startTime);
+              const bt = hhmm(b.startTime);
+              if (!at && bt) return -1; // all-day first
+              if (at && !bt) return 1;
+              if (!at && !bt) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+              return at!.localeCompare(bt!);
+            });
+          const target = arg.jsEvent.target as HTMLElement | null;
+          const linkEl = target?.closest?.(".fc-more-link") as HTMLElement | null;
+          const rect = linkEl?.getBoundingClientRect();
+          const mouse = arg.jsEvent as MouseEvent;
+          const anchor = rect
+            ? { left: rect.left, top: rect.top, bottom: rect.bottom }
+            : { left: mouse.clientX, top: mouse.clientY, bottom: mouse.clientY };
+          setMorePopover({
+            dateLabel: DateTime.fromISO(dateStr).toFormat("ccc, LLL d"),
+            items: dayItems.map((i) => ({
+              id: i.id,
+              title: i.title,
+              color: dayColors.get(i.date!) ?? "#6b7280",
+              category: i.category || "other",
+              // tz-aware label when meaningful (cross-tz / non-home stop);
+              // otherwise the plain 24h start (matches the month cell's time).
+              timeLabel: formatItemTimeLabel(i, homeTz) ?? hhmm(i.startTime),
+            })),
+            anchor,
+          });
+          // FC's MoreLinkContainer: `if (!ret || ret==='popover') showPopover;
+          // else if (typeof ret==='string') navigate`. A TRUTHY NON-STRING hits
+          // neither branch → FC shows nothing (no native pane-clipping popover,
+          // no navigate-away), leaving only our portaled popover. The public
+          // type is `MoreLinkAction | void`, hence the cast.
+          return true as unknown as undefined;
+        }}
         slotMinTime="00:00:00"
         slotMaxTime="24:00:00"
         scrollTime="06:00:00"
@@ -242,7 +334,108 @@ export function CalendarView({
           shown (assign a date in the table to place them).
         </p>
       )}
+      {morePopover && (
+        <MoreEventsPopover
+          data={morePopover}
+          onSelect={(id) => {
+            onItemSelect(id);
+            setMorePopover(null);
+          }}
+          onClose={() => setMorePopover(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// Month "+N more" popover: a paper card portaled to <body> (escapes the
+// scrolling pane that clipped FC's native popover) listing the day's events.
+// Position is set by direct DOM mutation in a layout effect (NOT setState — the
+// React Compiler lint forbids setState-in-effect), measuring after mount to
+// clamp within the viewport and flip above the link if it would overflow.
+function MoreEventsPopover({
+  data,
+  onSelect,
+  onClose,
+}: {
+  data: MorePopoverData;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const pad = 8;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let left = data.anchor.left;
+    let top = data.anchor.bottom + 4;
+    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
+    if (left < pad) left = pad;
+    if (top + h > window.innerHeight - pad) {
+      const above = data.anchor.top - h - 4;
+      top = above > pad ? above : Math.max(pad, window.innerHeight - h - pad);
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    el.style.visibility = "visible";
+  }, [data]);
+
+  useEffect(() => {
+    function onDocPointer(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", onDocPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="wp-morepop"
+      role="dialog"
+      style={{
+        left: data.anchor.left,
+        top: data.anchor.bottom + 4,
+        visibility: "hidden",
+      }}
+    >
+      <div className="wp-morepop-head">{data.dateLabel}</div>
+      <div className="wp-morepop-body">
+        {data.items.map((it) => (
+          <button
+            key={it.id}
+            type="button"
+            className="wp-morepop-row"
+            onClick={() => onSelect(it.id)}
+          >
+            <span
+              className="wp-morepop-bar"
+              style={{ backgroundColor: it.color }}
+            />
+            <CategoryIcon
+              category={it.category}
+              size={12}
+              className="wp-morepop-icon shrink-0"
+            />
+            <span className="wp-morepop-title">{eventTitleNode(it.title)}</span>
+            {it.timeLabel && (
+              <span className="wp-morepop-time">{it.timeLabel}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body
   );
 }
 
