@@ -24,8 +24,8 @@
 .DS_Store
 *.pem
 TODO.md
-IMPROVEMENTS.md
-IMPROVEMENTS_DONE.md
+# IMPROVEMENTS.md + IMPROVEMENTS_DONE.md are TRACKED — they're the project's
+# engineering decision log / backlog (rationale belongs in version control).
 test_prompts.md
 Waypoint_PRD_v1.md
 
