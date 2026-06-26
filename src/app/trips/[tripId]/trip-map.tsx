@@ -464,9 +464,18 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       placed.push(box);
       dotByKey.set(key, box);
     }
+    // Batch ALL label reads before the placement loop's writes. Measuring a label
+    // rect (read) and then flipping another label's `visibility`/`top` (write) in
+    // the same loop forces a synchronous reflow per label — the lag felt after a
+    // zoom/fit. Reading every rect first, then only writing, collapses O(n) forced
+    // reflows into one read batch + one write batch.
+    const rectByKey = new Map<string, DOMRect>();
+    for (const [key, meta] of entries) {
+      rectByKey.set(key, meta.labelEl.getBoundingClientRect());
+    }
     for (const [key, meta] of entries) {
       const el = meta.labelEl;
-      const rect = el.getBoundingClientRect();
+      const rect = rectByKey.get(key)!;
       const dot = dotByKey.get(key);
       // Candidate boxes for the label below vs. above its own dot. Same width and
       // horizontal center; only the vertical band differs. (Reflect across the dot
@@ -671,8 +680,17 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     mapRef.current = map;
 
     // Re-cluster/re-collide on every settle (pan brings new points into view;
-    // zoom merges/splits clusters).
-    const onMove = () => renderClustersRef.current();
+    // zoom merges/splits clusters). Coalesce with rAF: a single fitBounds settles
+    // both `moveend` and `zoomend` back-to-back, which would otherwise run the
+    // (reflow-heavy) render+collide twice in the same frame.
+    let moveRaf = 0;
+    const onMove = () => {
+      if (moveRaf) return;
+      moveRaf = requestAnimationFrame(() => {
+        moveRaf = 0;
+        renderClustersRef.current();
+      });
+    };
     map.on("moveend", onMove);
     map.on("zoomend", onMove);
 
@@ -708,6 +726,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     (window as unknown as { __waypointMap?: maplibregl.Map }).__waypointMap = map;
 
     return () => {
+      if (moveRaf) cancelAnimationFrame(moveRaf);
       map.off("moveend", onMove);
       map.off("zoomend", onMove);
       map.off("load", onLoad);
