@@ -777,7 +777,7 @@ function DayGroupTable({
                   return (
                     <th
                       key={header.id}
-                      className={`relative text-left text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 py-1.5 ${
+                      className={`relative text-left text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider px-2 py-1.5 border-r border-zinc-100 dark:border-zinc-800 last:border-r-0 ${
                         isOver
                           ? "border-l-2 border-blue-400 dark:border-blue-500"
                           : ""
@@ -816,20 +816,23 @@ function DayGroupTable({
                         )
                       )}
                       {header.column.getCanResize() && (
+                        // Wide invisible hit area; inner div is the thin visual.
                         <div
                           onMouseDown={header.getResizeHandler()}
                           onTouchStart={header.getResizeHandler()}
                           onClick={(e) => e.stopPropagation()}
                           onDoubleClick={() => header.column.resetSize()}
-                          // Edge grab strip; a resize must never start a column
-                          // drag, so it lives outside the draggable label.
-                          className={`absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none touch-none ${
-                            header.column.getIsResizing()
-                              ? "bg-blue-400 dark:bg-blue-500"
-                              : "hover:bg-zinc-300 dark:hover:bg-zinc-600"
-                          }`}
+                          className="group absolute right-0 top-0 h-full w-2 cursor-col-resize select-none touch-none"
                           title="Drag to resize · double-click to reset"
-                        />
+                        >
+                          <div
+                            className={`absolute right-0 top-0 h-full w-px transition-colors ${
+                              header.column.getIsResizing()
+                                ? "bg-blue-400 dark:bg-blue-500"
+                                : "group-hover:bg-zinc-400 dark:group-hover:bg-zinc-500"
+                            }`}
+                          />
+                        </div>
                       )}
                     </th>
                   );
