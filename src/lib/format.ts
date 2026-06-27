@@ -1,6 +1,7 @@
 // Shared display formatting helpers.
 
 import type { ItineraryItem } from "@/db/types";
+import { DateTime } from "luxon";
 import {
   localToInstant,
   instantToLocal,
@@ -36,6 +37,50 @@ export function formatItineraryDate(iso: string | null | undefined): string {
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+// Lenient 24-hour time parse for the custom Start-time editor (which replaces the
+// native <input type="time">, whose 12h/24h rendering follows the OS locale and
+// which Safari paints as a misleading "12:30 PM" placeholder on an empty value).
+// Accepts colon forms ("9:30", "09:30", "21:5") and bare digits (1–2 = hour,
+// 3–4 = HMM/HHMM: "9"→09:00, "930"→09:30, "0930"→09:30). Returns canonical
+// "HH:MM" 24h, or null when blank / out of range. This (input) plus the read-view
+// 24h formatter are the two format seams a future 12h-toggle would swap.
+export function parseTime24(raw: string): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  let h: number;
+  let min: number;
+  const colon = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (colon) {
+    h = Number(colon[1]);
+    min = Number(colon[2]);
+  } else if (/^\d{1,4}$/.test(s)) {
+    if (s.length <= 2) {
+      h = Number(s);
+      min = 0;
+    } else {
+      const p = s.padStart(4, "0");
+      h = Number(p.slice(0, 2));
+      min = Number(p.slice(2));
+    }
+  } else {
+    return null;
+  }
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+// Context-aware default for the "+ Add day" date input: today when the itinerary
+// has no dated items, else the day after the latest one. Prefilling a REAL value
+// also fixes Safari painting an empty <input type="date"> as a misleading "today"
+// placeholder that never commits. Dates are "YYYY-MM-DD" strings, so the
+// lexicographic max equals the chronological max.
+export function defaultNewDayDate(items: Pick<ItineraryItem, "date">[]): string {
+  const dates = items.map((i) => i.date).filter((d): d is string => !!d);
+  if (dates.length === 0) return DateTime.now().toISODate()!;
+  const max = dates.reduce((a, b) => (a > b ? a : b));
+  return DateTime.fromISO(max).plus({ days: 1 }).toISODate()!;
 }
 
 function hhmm(t: string | null): string | null {

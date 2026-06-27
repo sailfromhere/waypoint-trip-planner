@@ -53,7 +53,11 @@ import {
   type ReorderChange,
 } from "@/lib/hooks/use-itinerary";
 import { sequenceDay, sequenceTrip, type ScheduleChange } from "@/lib/trip-state/sequence";
-import { formatItemTimeLabel, formatItemTzBadge } from "@/lib/format";
+import {
+  formatItemTimeLabel,
+  formatItemTzBadge,
+  defaultNewDayDate,
+} from "@/lib/format";
 import { EditableCell } from "./editable-cell";
 import { LocationCell } from "./location-cell";
 import { buildDayColorMap } from "@/lib/trip-state/day-colors";
@@ -1465,7 +1469,14 @@ export function ItineraryTable({
           </form>
         ) : (
           <>
-            <Button variant="dashed" size="sm" onClick={() => setShowNewDay(true)}>
+            <Button
+              variant="dashed"
+              size="sm"
+              onClick={() => {
+                setNewDateInput(defaultNewDayDate(items ?? []));
+                setShowNewDay(true);
+              }}
+            >
               + Add day
             </Button>
             <Button

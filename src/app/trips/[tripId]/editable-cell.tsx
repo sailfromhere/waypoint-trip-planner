@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { itemCategory, confirmationStatus } from "@/db/schema";
+import { parseTime24 } from "@/lib/format";
 
 const CATEGORY_LABELS: Record<string, string> = {
   drive: "Drive",
@@ -85,13 +86,13 @@ export function EditableCell({
     if (multiline && inputRef.current instanceof HTMLTextAreaElement) {
       autoGrow(inputRef.current);
     }
-    // .select() throws InvalidStateError on date/time inputs, and selecting all
-    // of a long multi-line value is unwanted — only select single-line text-like
-    // inputs.
+    // .select() throws InvalidStateError on a native date input, and selecting
+    // all of a long multi-line value is unwanted — only select single-line
+    // text-like inputs (time is now a plain text field, so include it: typing
+    // replaces the value).
     if (
       inputRef.current instanceof HTMLInputElement &&
       !multiline &&
-      type !== "time" &&
       type !== "date"
     ) {
       inputRef.current.select();
@@ -123,6 +124,21 @@ export function EditableCell({
         : draft;
     setEditing(false);
     const trimmed = live.trim();
+
+    // Time is a custom 24h text field: normalize lenient input ("930" → "09:30")
+    // before comparing/saving. Empty clears; unparseable input keeps the current
+    // value (so a typo doesn't wipe a good time).
+    if (type === "time") {
+      if (!trimmed) {
+        if (toHHMM(value)) onSave(null);
+        return;
+      }
+      const norm = parseTime24(trimmed);
+      if (norm == null) return;
+      if (norm === toHHMM(value)) return;
+      onSave(norm);
+      return;
+    }
 
     if (trimmed === currentString()) return;
 
@@ -281,8 +297,10 @@ export function EditableCell({
     );
   }
 
-  const inputType =
-    type === "date" ? "date" : type === "time" ? "time" : "text";
+  // Time is a custom 24h text field (not a native type="time") so the empty
+  // state is a clear "HH:MM" hint and the format is 24h on every browser —
+  // Safari's native time input follows the OS locale and can't be forced.
+  const inputType = type === "date" ? "date" : "text";
 
   return (
     <input
@@ -299,8 +317,14 @@ export function EditableCell({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={handleKeyDown}
-      inputMode={type === "number" || type === "cost" ? "decimal" : undefined}
-      placeholder={placeholder}
+      inputMode={
+        type === "number" || type === "cost"
+          ? "decimal"
+          : type === "time"
+            ? "numeric"
+            : undefined
+      }
+      placeholder={type === "time" ? "HH:MM" : placeholder}
       className={`w-full bg-transparent border-0 outline-none text-xs py-1 px-1 rounded ring-1 ring-zinc-300 dark:ring-zinc-600 focus:ring-zinc-500 ${className}`}
     />
   );

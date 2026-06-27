@@ -2,14 +2,14 @@ import { test, expect, request as pwRequest } from "@playwright/test";
 
 /**
  * Cross-browser regression guard. Runs in BOTH chromium and webkit (see
- * playwright.config.ts) because native form controls diverge across engines —
- * a controlled <input type="time"> is wiped mid-entry by Safari/WebKit, so the
- * editable cells use UNCONTROLLED inputs + read the DOM value at commit. This
- * test failed in webkit before that fix (start time "went away" on commit).
+ * playwright.config.ts) because native form controls diverge across engines.
  *
- * NOTE: Playwright's keyboard.type does NOT populate WebKit's native time
- * segments, so we use locator.fill() (reliable cross-engine) to set the value,
- * then exercise the commit + persistence path that actually broke.
+ * The Start cell no longer uses a native <input type="time"> — Safari rendered
+ * an empty one as a misleading "12:30 PM" (12h, looks filled but empty) and its
+ * 12h/24h format follows the OS locale. It's now a custom UNCONTROLLED text
+ * field (placeholder "HH:MM", 24h on every engine) that reads the DOM value at
+ * commit and accepts lenient input ("930" → "09:30"). This guards both the
+ * lenient parse and the commit→persist path that historically broke in WebKit.
  */
 
 const BASE = "http://localhost:3000";
@@ -36,18 +36,21 @@ test.afterAll(async () => {
   await ctx.dispose();
 });
 
-test("start time entry commits and persists (uncontrolled time input)", async ({ page }) => {
+test("start time entry commits and persists (custom 24h text input)", async ({ page }) => {
   await page.goto(`/trips/${tripId}`);
   const row = page.locator("tr", { hasText: "Tour" }).first();
   await expect(row).toBeVisible();
 
-  // Cells: actions ✕, title, category, start, … → Start is nth(3).
-  const startCell = row.locator("td").nth(3);
+  // Cells: actions ✕ (0), title+category (1), Start (2), … — title & category
+  // are one merged cell, so Start is nth(2).
+  const startCell = row.locator("td").nth(2);
   await startCell.getByText("—").click();
-  const timeInput = row.locator('input[type="time"]');
+  // The editor is now a text field with a clear "HH:MM" empty-state hint.
+  const timeInput = row.getByPlaceholder("HH:MM");
   await expect(timeInput).toBeVisible();
 
-  await timeInput.fill("14:30");
+  // Lenient input: bare "930" must normalize to 24h "09:30".
+  await timeInput.fill("930");
   // Commit via Enter (blur path is covered by the chromium smoke test). Wait for
   // the PATCH to COMMIT before reloading — otherwise reload aborts the in-flight
   // optimistic write and the post-reload assertion races (the classic
@@ -58,11 +61,12 @@ test("start time entry commits and persists (uncontrolled time input)", async ({
   await page.keyboard.press("Enter");
   await patched;
 
-  // The value must survive commit (it "went away" in WebKit before the fix)…
-  await expect(startCell).toHaveText("14:30");
+  // The normalized value must survive commit (it "went away" in WebKit before
+  // the original uncontrolled fix)…
+  await expect(startCell).toHaveText("09:30");
   // …and a reload (persisted to the DB).
   await page.reload();
   await expect(
-    page.locator("tr", { hasText: "Tour" }).first().locator("td").nth(3)
-  ).toHaveText("14:30");
+    page.locator("tr", { hasText: "Tour" }).first().locator("td").nth(2)
+  ).toHaveText("09:30");
 });

@@ -148,10 +148,10 @@ test("start time saves and displays as 24h HH:MM (no seconds)", async ({
   const startCell = row.locator("td").nth(2);
   await startCell.click({ position: { x: 8, y: 5 } });
 
-  // S7-4: the time input must accept the value and not blank out. A native
-  // <input type="time"> rejects a seconds-bearing value, so this fails against
-  // the old code that fed it the raw "HH:MM:SS".
-  const timeInput = row.locator('input[type="time"]');
+  // S7-4: the time input must accept the value and not blank out. The Start cell
+  // is now a custom 24h text field (placeholder "HH:MM") that normalizes input
+  // on commit — the read view renders "14:30" with no seconds tail.
+  const timeInput = row.getByPlaceholder("HH:MM");
   await expect(timeInput).toBeVisible();
   await timeInput.fill("14:30");
   await timeInput.blur();

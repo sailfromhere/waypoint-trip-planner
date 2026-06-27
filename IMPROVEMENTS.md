@@ -84,7 +84,7 @@ Itinerary-table usability bugs/features from real use. Triaged by ROI into tiers
 
 ### Table UX (Phase 1 polish)
 - **Sorting** — click column header to sort; also a sort-order menu for multi-column/complex sorts. P1. Status: TBD
-- **Smart "Add day" defaults** — should default based on trip context (e.g. next day after last item, or within trip date range), not today's date. Only default to today when the trip is blank. P2. Status: TBD
+- **Smart "Add day" defaults** — should default based on trip context (e.g. next day after last item, or within trip date range), not today's date. Only default to today when the trip is blank. P2. Status: Built 2026-06-26 — `defaultNewDayDate()` in `src/lib/format.ts`; "Add day" button prefills date, clicking Add immediately works.
 - **Notes column: single-line edit for multi-line content** — notes often contain multi-line text, but the inline edit renders as a single-line input, making it very hard to read or navigate the content. Should use a `<textarea>` (or expand to multi-line on focus) for fields that naturally contain long/multi-line values. P1. Status: TBD
 
 ### Security

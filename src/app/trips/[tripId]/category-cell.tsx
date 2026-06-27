@@ -1,12 +1,15 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   CategoryIcon,
   categoryLabel,
@@ -15,10 +18,16 @@ import {
 import type { ItineraryItem } from "@/db/types";
 import { EditableCell } from "./editable-cell";
 
+const MENU_W = 160; // w-40
+
 // Custom category menu — replaces the native <select> so we can show the icon
-// set and match the app's styling. Positioned FIXED off the trigger rect so it
-// escapes the day-table's `overflow-x-auto` clipping (a plain absolute popover
-// gets cut off; see the calendar popover-clipping note in memory).
+// set and match the app's styling. Rendered via a PORTAL to document.body and
+// positioned FIXED off the trigger rect. The portal is essential: the day-group
+// wrapper is `.wp-contain-block` (content-visibility:auto ⇒ contain:layout
+// paint), which makes itself the containing block for — and paint-clips — fixed
+// descendants. Rendered inline the menu would be offset by the group's position
+// and clipped to its box; portaling to <body> restores true viewport-relative
+// positioning. Same pattern as location-cell.tsx.
 function CategoryMenu({
   anchor,
   current,
@@ -31,15 +40,31 @@ function CategoryMenu({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  // Position once at mount off the (stable) trigger rect: below it, flipping up
-  // if it would overflow the viewport.
-  const [pos] = useState<{ left: number; top: number }>(() => {
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  // Recompute off the live trigger rect: below it, flipping up if it would
+  // overflow the viewport bottom; left clamped so it never runs off the right
+  // edge. Tracks the anchor as the left pane scrolls instead of closing.
+  const reposition = useCallback(() => {
     const r = anchor.getBoundingClientRect();
     const menuH = 8 + CATEGORY_KEYS.length * 30;
     const top =
       r.bottom + 4 + menuH > window.innerHeight ? r.top - 4 - menuH : r.bottom + 4;
-    return { left: r.left, top };
-  });
+    const left = Math.min(r.left, window.innerWidth - MENU_W - 8);
+    setPos({ left, top });
+  }, [anchor]);
+
+  useLayoutEffect(() => {
+    reposition();
+    // The left pane scrolls independently — capture scrolls anywhere so the
+    // portal menu stays glued to the trigger (it lives on document.body).
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [reposition]);
 
   useEffect(() => {
     function onDoc(e: globalThis.MouseEvent) {
@@ -51,16 +76,15 @@ function CategoryMenu({
     }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
-    // Close on scroll — the fixed menu doesn't track a scrolling anchor.
-    window.addEventListener("scroll", onClose, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onClose, true);
     };
   }, [anchor, onClose]);
 
-  return (
+  if (!pos) return null;
+
+  return createPortal(
     <div
       ref={ref}
       role="listbox"
@@ -93,7 +117,8 @@ function CategoryMenu({
           {categoryLabel(key)}
         </button>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 
