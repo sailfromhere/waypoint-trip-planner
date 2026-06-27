@@ -748,6 +748,10 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coordSignature, mapReady]);
 
+  // Only drive visibility matters for route drawing — toggling other categories
+  // should not tear down and re-fade routes.
+  const drivesHidden = hiddenCategories.has("drive");
+
   // Draw route polylines: drive routes (solid, day-colored, zoom-scaled width)
   // drawn from the PERSISTED routeGeometry on each drive item (instant on load,
   // no OSRM wait), and day connectors (faint gray dashed) built client-side as
@@ -775,7 +779,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
       // Drive routes — drawn only from real routed geometry (persisted on the item
       // or freshly routed by the routes query). A drive with no routed geometry yet
       // draws nothing rather than a misleading straight line.
-      if (!hiddenCategories.has("drive")) {
+      if (!drivesHidden) {
         // Resolve every drive's geometry FIRST, so computeRouteSegments can split
         // each route into runs and offset only the stretches it shares with a
         // different day — overlapping roads fan into parallel lanes while the
@@ -890,7 +894,7 @@ export function TripMap({ items, drives, selectedItemId, onItemSelect, homeTimez
         map.off("style.load", draw);
       };
     }
-  }, [drives, items, hiddenCategories, getDayColor, mapReady]);
+  }, [drives, items, drivesHidden, getDayColor, mapReady]);
 
   // Apply a basemap swap. setStyle tears down all custom sources/layers (our
   // drive routes + hit targets), so re-add them once the new style finishes
